@@ -41,6 +41,74 @@ Get your API key from: https://ai.google.dev/
 ✅ **Database Logging** - All generations logged to `ai_generation_logs`  
 ✅ **Response Headers** - Rate limit info in headers  
 
+---
+
+## ✅ AI Review Actions - Implementation Summary
+
+### Files Created
+
+#### Services (`src/lib/services/`)
+1. **ai-review-action.service.ts** - Review action logging and validation
+
+#### Schemas (`src/lib/schemas/`)
+1. **ai-review-action.schema.ts** - Zod validation schema with conditional logic
+
+#### API Endpoints (`src/pages/api/ai/`)
+1. **review-actions.ts** - POST endpoint for logging review actions
+
+### Features Implemented
+
+✅ **Authentication** - Supabase auth integration  
+✅ **Input Validation** - Zod schema with conditional fields  
+✅ **Ownership Verification** - Generation log belongs to user  
+✅ **Action Types** - Accept, edit, reject tracking  
+✅ **Error Handling** - Comprehensive error responses  
+✅ **Database Logging** - All actions logged to `ai_review_actions`  
+
+### Service Usage
+
+#### AiReviewActionService
+
+```typescript
+import { AiReviewActionService } from '../lib/services/ai-review-action.service';
+
+const reviewActionService = new AiReviewActionService(supabase);
+
+// Verify generation log ownership
+await reviewActionService.verifyGenerationLogOwnership(
+  generationLogId,
+  userId
+);
+
+// Create review action
+const action = await reviewActionService.create({
+  user_id: userId,
+  generation_log_id: generationLogId,
+  flashcard_id: flashcardId,
+  action_type: 'accepted',
+  original_front: 'Original front',
+  original_back: 'Original back',
+  edited_front: null,
+  edited_back: null
+});
+```
+
+### Validation Rules
+
+1. **generation_log_id** - Must be valid UUID and belong to user
+2. **action_type** - Must be one of: "accepted", "edited", "rejected"
+3. **original_front/back** - Required, 1-1000 characters
+4. **edited_front/back** - Required only when action_type is "edited"
+5. **flashcard_id** - Can be null for rejected cards
+
+### Security Features
+
+- Bearer token authentication required
+- Generation log ownership verification
+- Input sanitization and validation
+- SQL injection prevention (Supabase client)
+- Row-level security (RLS) policies
+
 ### Security Features
 
 - Bearer token authentication required

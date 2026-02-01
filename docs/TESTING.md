@@ -306,17 +306,172 @@ chmod +x test-generate-endpoint.sh
 ./test-generate-endpoint.sh
 ```
 
+---
+
+## AI Review Actions Endpoint Tests
+
+### Test Scenarios
+
+#### Test 1: Accepted Action
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "YOUR_GENERATION_LOG_ID",
+    "flashcard_id": "YOUR_FLASHCARD_ID",
+    "action_type": "accepted",
+    "original_front": "What is the Spanish verb estar used for?",
+    "original_back": "To describe temporary states and locations"
+  }'
+```
+
+**Expected Result:**
+- Status: 201 Created
+- Response contains: `id`, `generation_log_id`, `flashcard_id`, `action_type`, `created_at`
+
+#### Test 2: Edited Action
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "YOUR_GENERATION_LOG_ID",
+    "flashcard_id": "YOUR_FLASHCARD_ID",
+    "action_type": "edited",
+    "original_front": "Original front",
+    "original_back": "Original back",
+    "edited_front": "Improved front",
+    "edited_back": "Improved back"
+  }'
+```
+
+**Expected Result:**
+- Status: 201 Created
+- Both `edited_front` and `edited_back` must be provided
+
+#### Test 3: Rejected Action
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "YOUR_GENERATION_LOG_ID",
+    "flashcard_id": null,
+    "action_type": "rejected",
+    "original_front": "Poor quality front",
+    "original_back": "Poor quality back"
+  }'
+```
+
+**Expected Result:**
+- Status: 201 Created
+- `flashcard_id` can be null for rejected cards
+
+#### Test 4: Validation Error - Missing Edited Fields
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "YOUR_GENERATION_LOG_ID",
+    "flashcard_id": "YOUR_FLASHCARD_ID",
+    "action_type": "edited",
+    "original_front": "Front",
+    "original_back": "Back"
+  }'
+```
+
+**Expected Result:**
+- Status: 400 Bad Request
+- Error code: `VALIDATION_ERROR`
+- Error message about missing `edited_front` and `edited_back`
+
+#### Test 5: Validation Error - Invalid UUID
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "invalid-uuid",
+    "flashcard_id": null,
+    "action_type": "rejected",
+    "original_front": "Front",
+    "original_back": "Back"
+  }'
+```
+
+**Expected Result:**
+- Status: 400 Bad Request
+- Error code: `VALIDATION_ERROR`
+- Error message: "Invalid generation log ID"
+
+#### Test 6: Not Found - Non-existent Generation Log
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "00000000-0000-0000-0000-000000000000",
+    "flashcard_id": null,
+    "action_type": "rejected",
+    "original_front": "Front",
+    "original_back": "Back"
+  }'
+```
+
+**Expected Result:**
+- Status: 404 Not Found
+- Error code: `NOT_FOUND`
+- Error message: "AI generation log not found or does not belong to user"
+
+#### Test 7: Unauthorized - No Token
+```bash
+curl -X POST http://localhost:3000/api/ai/review-actions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "generation_log_id": "YOUR_GENERATION_LOG_ID",
+    "flashcard_id": null,
+    "action_type": "rejected",
+    "original_front": "Front",
+    "original_back": "Back"
+  }'
+```
+
+**Expected Result:**
+- Status: 401 Unauthorized
+- Error code: `UNAUTHORIZED`
+- Error message: "Authentication required. Please log in."
+
+### Automated Test Script
+
+Located at: `scripts/test-review-actions.sh`
+
+Run tests:
+```bash
+chmod +x scripts/test-review-actions.sh
+./scripts/test-review-actions.sh
+```
+
+The script will:
+1. Create a test user and get auth token
+2. Create test data (generation log, flashcard)
+3. Run all test scenarios automatically
+4. Display color-coded results
+
 ## Success Criteria
 
 ✅ All authentication tests pass  
 ✅ All validation tests return proper error codes  
-✅ Rate limiting works correctly  
 ✅ Successful generations return proper structure  
 ✅ Different languages work  
 ✅ Database logging works  
 ✅ Response times are acceptable  
 ✅ Error handling is comprehensive  
 ✅ No console errors in server logs  
+✅ **AI review actions logged correctly**  
+✅ **Conditional validation works (edited fields)**  
+✅ **Ownership verification works**  
 
 ## Notes
 
@@ -324,3 +479,4 @@ chmod +x test-generate-endpoint.sh
 - Use `jq` for JSON formatting (install: `sudo dnf install jq`)
 - Monitor server logs for any errors
 - Check Supabase dashboard for database entries
+- For review actions, you need a valid `generation_log_id` from a previous generation
