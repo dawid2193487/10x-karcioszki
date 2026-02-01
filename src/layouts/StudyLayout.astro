@@ -1,0 +1,24 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'Sesja nauki' } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} - AI Flashcards</title>
+    <meta name="generator" content={Astro.generator} />
+  </head>
+  <body class="min-h-screen bg-background">
+    <main class="container mx-auto max-w-4xl px-4 py-8">
+      <slot />
+    </main>
+  </body>
+</html>

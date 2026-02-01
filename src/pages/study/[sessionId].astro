@@ -1,0 +1,85 @@
+---
+import StudyLayout from "../../layouts/StudyLayout.astro";
+import StudySession from "../../components/StudySession";
+import type { DueFlashcardDTO, StudySessionDetailDTO } from "../../types";
+
+export const prerender = false;
+
+const { sessionId } = Astro.params;
+
+if (!sessionId) {
+  return Astro.redirect("/");
+}
+
+// Check authentication
+const supabase = Astro.locals.supabase;
+const {
+  data: { user },
+  error: authError,
+} = await supabase.auth.getUser();
+
+if (authError || !user) {
+  return Astro.redirect("/login");
+}
+// Fetch session data
+let sessionData: StudySessionDetailDTO | null = null;
+let dueCards: DueFlashcardDTO[] = [];
+let error: string | null = null;
+
+try {
+  // Get session details
+  const sessionResponse = await fetch(`${Astro.url.origin}/api/study-sessions/${sessionId}`, {
+    headers: {
+      Cookie: Astro.request.headers.get("Cookie") || "",
+    },
+  });
+
+  if (!sessionResponse.ok) {
+    if (sessionResponse.status === 404) {
+      return Astro.redirect("/dashboard");
+    }
+    throw new Error("Failed to fetch session data");
+  }
+
+  sessionData = await sessionResponse.json();
+
+  // Check if session is already completed
+  if (sessionData.ended_at) {
+    return Astro.redirect(`/decks/${sessionData.deck_id}`);
+  }
+
+  // Get due cards for the deck
+  const dueCardsResponse = await fetch(`${Astro.url.origin}/api/decks/${sessionData.deck_id}/due?limit=20`, {
+    headers: {
+      Cookie: Astro.request.headers.get("Cookie") || "",
+    },
+  });
+
+  if (dueCardsResponse.ok) {
+    const dueData = await dueCardsResponse.json();
+    dueCards = dueData.data || [];
+  }
+} catch (e) {
+  // Error loading study session
+  error = "Failed to load study session";
+}
+
+if (!sessionData) {
+  return Astro.redirect("/dashboard");
+}
+---
+
+<StudyLayout title={`Nauka: ${sessionData.deck_name}`}>
+  {
+    error ? (
+      <div class="text-center py-12">
+        <p class="text-destructive text-lg">{error}</p>
+        <a href="/dashboard" class="text-primary hover:underline mt-4 inline-block">
+          Powrót do dashboardu
+        </a>
+      </div>
+    ) : (
+      <StudySession client:only="react" sessionId={sessionId} initialSession={sessionData} initialDueCards={dueCards} />
+    )
+  }
+</StudyLayout>

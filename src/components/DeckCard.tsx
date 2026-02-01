@@ -105,9 +105,31 @@ export function DeckCard({ deck }: DeckCardProps) {
     setShowDeleteModal(false);
   };
 
-  const handleStudyClick = () => {
+  const handleStudyClick = async () => {
     if (deck.due_count > 0) {
-      window.location.href = `/study/${deck.id}`;
+      try {
+        // Create study session
+        const response = await fetch("/api/study-sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deck_id: deck.id }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error?.message || "Failed to start study session");
+        }
+
+        const sessionData = await response.json();
+
+        // Redirect to study session page
+        window.location.href = `/study/${sessionData.id}`;
+      } catch (error: any) {
+        console.error("Error starting study session:", error);
+        toast.error(error.message || "Nie udało się rozpocząć nauki");
+      }
     }
   };
 
