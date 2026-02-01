@@ -1,94 +1,235 @@
-# 10x Astro Starter
+# AI Flashcards
 
-A modern, opinionated starter template for building fast, accessible, and AI-friendly web applications.
+An intelligent web application for creating and studying educational flashcards powered by AI. Transform your learning materials into high-quality flashcards in seconds using Google Gemini, with full control over the final content.
+
+## Table of Contents
+
+- [Project Description](#project-description)
+- [Tech Stack](#tech-stack)
+- [Getting Started Locally](#getting-started-locally)
+- [Available Scripts](#available-scripts)
+- [Project Scope](#project-scope)
+- [Project Status](#project-status)
+- [License](#license)
+
+## Project Description
+
+AI Flashcards solves the time-consuming problem of manually creating high-quality educational flashcards. The application combines three key elements:
+
+- **AI-Powered Generator**: Transform raw educational text into question-and-answer flashcards using Google Gemini AI
+- **Manual Editor**: Create and modify flashcards with a simple, intuitive interface
+- **Spaced Repetition System**: Learn effectively using the proven SM-2 algorithm
+
+### Key Features
+
+- 🤖 **AI Generation**: Convert 100-5000 characters of text into flashcards (~1 card per 250 characters)
+- ✏️ **Review & Edit**: Review AI-generated flashcards before saving with inline editing
+- 📚 **Deck Management**: Organize flashcards into decks (talias) by topic
+- 🧠 **Smart Learning**: Spaced repetition algorithm optimizes review timing
+- ⌨️ **Keyboard Shortcuts**: Efficient workflow with comprehensive keyboard support
+- 🔒 **User Authentication**: Secure email/password authentication via Supabase
+- 📊 **Learning Analytics**: Track your progress and retention
+
+### Target Users
+
+- Students studying new subjects
+- Self-learners acquiring new knowledge
+- Anyone wanting to efficiently absorb and retain information
 
 ## Tech Stack
 
-- [Astro](https://astro.build/) v5.5.5 - Modern web framework for building fast, content-focused websites
-- [React](https://react.dev/) v19.0.0 - UI library for building interactive components
-- [TypeScript](https://www.typescriptlang.org/) v5 - Type-safe JavaScript
-- [Tailwind CSS](https://tailwindcss.com/) v4.0.17 - Utility-first CSS framework
+### Frontend
+- **Astro 5** - Static site generator with partial hydration
+- **React 19** - UI components for interactive features
+- **TypeScript 5** - Type-safe development
+- **Tailwind CSS 4** - Utility-first styling
+- **Shadcn/ui** - Accessible component library
 
-## Prerequisites
+### Backend
+- **Supabase** - Backend-as-a-Service (authentication, database, real-time)
 
-- Node.js v22.14.0 (as specified in `.nvmrc`)
-- npm (comes with Node.js)
+### AI
+- **Google Gemini API** - AI-powered flashcard generation
 
-## Getting Started
+## Getting Started Locally
 
-1. Clone the repository:
+### Prerequisites
 
-```bash
-git clone https://github.com/przeprogramowani/10x-astro-starter.git
-cd 10x-astro-starter
-```
+- **Node.js**: v22.14.0 (use [nvm](https://github.com/nvm-sh/nvm) for version management)
+- **npm**: v9+ (comes with Node.js)
+- **Supabase Account**: [Sign up](https://supabase.com) for free
+- **Google Gemini API Key**: [Get API access](https://ai.google.dev/)
 
-2. Install dependencies:
+### Installation
 
-```bash
-npm install
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/10x-karcioszki.git
+   cd 10x-karcioszki
+   ```
 
-3. Run the development server:
+2. **Install Node.js version**
+   ```bash
+   nvm install
+   nvm use
+   ```
 
-```bash
-npm run dev
-```
+3. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-4. Build for production:
+4. **Set up environment variables**
+   
+   Create a `.env` file in the root directory:
+   ```env
+   # Supabase
+   PUBLIC_SUPABASE_URL=your_supabase_url
+   PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   SUPABASE_SERVICE_KEY=your_supabase_service_key
+   
+   # Google Gemini
+   GEMINI_API_KEY=your_gemini_api_key
+   ```
 
-```bash
-npm run build
-```
+5. **Set up Supabase database**
+   
+   Run the SQL migrations in your Supabase project (migrations coming soon).
+
+6. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+7. **Open your browser**
+   
+   Navigate to `http://localhost:4321`
 
 ## Available Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run lint` - Run ESLint
-- `npm run lint:fix` - Fix ESLint issues
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server with hot-reload |
+| `npm run build` | Build production-ready static site |
+| `npm run preview` | Preview production build locally |
+| `npm run astro` | Run Astro CLI commands |
+| `npm run lint` | Check code for linting errors |
+| `npm run lint:fix` | Auto-fix linting errors |
+| `npm run format` | Format code with Prettier |
 
-## Project Structure
+## Project Scope
 
-```md
-.
-├── src/
-│   ├── layouts/    # Astro layouts
-│   ├── pages/      # Astro pages
-│   │   └── api/    # API endpoints
-│   ├── components/ # UI components (Astro & React)
-│   └── assets/     # Static assets
-├── public/         # Public assets
-```
+### ✅ Included in MVP
 
-## AI Development Support
+**User Management**
+- Email/password authentication
+- User data separation and security
 
-This project is configured with AI development tools to enhance the development experience, providing guidelines for:
+**Deck Management**
+- Create, edit, and delete decks
+- View flashcard counts and pending reviews
 
-- Project structure
-- Coding practices
-- Frontend development
-- Styling with Tailwind
-- Accessibility best practices
-- Astro and React guidelines
+**AI Flashcard Generation**
+- Input text validation (100-5000 characters)
+- Backend AI generation via Google Gemini
+- Character counter with real-time feedback
+- Configurable AI prompts
 
-### Cursor IDE
+**Flashcard Review & Editing**
+- Review all generated flashcards before saving
+- Accept, edit, or reject individual flashcards
+- Inline editing capabilities
+- Keyboard shortcuts for efficient workflow
+- Select target deck during review
 
-The project includes AI rules in `.cursor/rules/` directory that help Cursor IDE understand the project structure and provide better code suggestions.
+**Manual Flashcard Management**
+- Create flashcards manually
+- Inline editing in deck view
+- Auto-save functionality
+- Delete individual flashcards
 
-### GitHub Copilot
+**Learning System**
+- Spaced repetition algorithm (SM-2)
+- Study sessions per deck
+- Difficulty ratings (Again, Hard, Good, Easy)
+- Progress tracking and session summaries
+- Learning history per flashcard
 
-AI instructions for GitHub Copilot are available in `.github/copilot-instructions.md`
+**Keyboard Shortcuts**
+- Learning session: Space (reveal), 1-4 (rate difficulty)
+- Review mode: Enter (accept), E (edit), Delete (reject), Tab (next)
+- Help: ? (show all shortcuts)
 
-### Windsurf
+**Security & Validation**
+- Zod schema validation
+- Rate limiting on AI endpoints
+- Environment variable protection
+- XSS and SQL injection prevention
 
-The `.windsurfrules` file contains AI configuration for Windsurf.
+**Analytics**
+- Track flashcard source (AI vs manual)
+- Log review actions (accept/edit/reject)
+- Timestamp tracking for creation and edits
 
-## Contributing
+### ❌ Not Included in MVP
 
-Please follow the AI guidelines and coding practices defined in the AI configuration files when contributing to this project.
+- Advanced spaced repetition algorithms (SuperMemo, Anki-level)
+- File import (PDF, DOCX, PPT)
+- Flashcard sharing between users
+- Public flashcard libraries
+- Educational platform integrations
+- Native mobile apps (iOS, Android)
+- Rich media support (images, audio, video)
+- Text formatting (bold, italic, highlights)
+- Advanced flashcard types (cloze deletion, multiple choice)
+- Gamification features
+- Team collaboration
+- Export to Anki or other platforms
+- Offline mode
+- Advanced statistics and charts
+- Usage limits and payment systems
+- Tags and advanced categorization
+- Full-text search
+- Nested decks
+- Public API
+- Multi-language interface
+
+### Technical Limitations
+
+- Text input: 100-5000 characters
+- Flashcard format: Plain text only
+- Organization: 2-level structure (Decks → Flashcards)
+- Each flashcard belongs to one deck only
+- AI Provider: Google Gemini only
+- Platform: Web only (no native apps)
+
+## Project Status
+
+🚧 **In Active Development** - MVP Phase
+
+### Current Progress
+
+- [x] Project setup and tech stack configuration
+- [ ] User authentication system
+- [ ] Deck management
+- [ ] AI flashcard generation
+- [ ] Flashcard review interface
+- [ ] Manual flashcard CRUD
+- [ ] Spaced repetition algorithm
+- [ ] Learning session interface
+- [ ] Keyboard shortcuts
+- [ ] Analytics and tracking
+
+### Success Metrics (MVP Goals)
+
+- **AI Acceptance Rate**: ≥75% of generated flashcards accepted or edited
+- **AI Usage Rate**: ≥75% of flashcards created using AI
+- **7-day Retention**: ≥40% of users return within 7 days
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) file for details
+
+---
+
+**Built with ❤️ for efficient learning**
