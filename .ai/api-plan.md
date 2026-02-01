@@ -19,12 +19,12 @@
 
 ### 2.1 Authentication
 
-Authentication is handled entirely by Supabase Auth. The application uses Supabase's built-in endpoints.
+Authentication is handled by proxying Supabase Auth through our API endpoints. This prevents exposing Supabase credentials to the frontend.
 
 #### Sign Up
 - **Method:** `POST`
-- **Path:** `/auth/v1/signup` (Supabase)
-- **Description:** Register a new user with email and password
+- **Path:** `/api/auth/signup`
+- **Description:** Register a new user with email and password (proxies Supabase Auth)
 - **Request Body:**
 ```json
 {
@@ -32,6 +32,9 @@ Authentication is handled entirely by Supabase Auth. The application uses Supaba
   "password": "securePassword123"
 }
 ```
+- **Validation:**
+  - `email`: required, valid email format
+  - `password`: required, minimum 8 characters
 - **Success Response:** `200 OK`
 ```json
 {
@@ -49,11 +52,12 @@ Authentication is handled entirely by Supabase Auth. The application uses Supaba
 - **Error Responses:**
   - `400 Bad Request` - Invalid email format or weak password
   - `422 Unprocessable Entity` - Email already registered
+  - `500 Internal Server Error` - Supabase service error
 
 #### Sign In
 - **Method:** `POST`
-- **Path:** `/auth/v1/token?grant_type=password` (Supabase)
-- **Description:** Authenticate existing user
+- **Path:** `/api/auth/signin`
+- **Description:** Authenticate existing user (proxies Supabase Auth)
 - **Request Body:**
 ```json
 {
@@ -61,6 +65,9 @@ Authentication is handled entirely by Supabase Auth. The application uses Supaba
   "password": "securePassword123"
 }
 ```
+- **Validation:**
+  - `email`: required, valid email format
+  - `password`: required, string
 - **Success Response:** `200 OK`
 ```json
 {
@@ -75,15 +82,45 @@ Authentication is handled entirely by Supabase Auth. The application uses Supaba
 }
 ```
 - **Error Responses:**
-  - `400 Bad Request` - Invalid credentials
-  - `401 Unauthorized` - Authentication failed
+  - `400 Bad Request` - Validation failed
+  - `401 Unauthorized` - Invalid credentials
+  - `500 Internal Server Error` - Supabase service error
 
 #### Sign Out
 - **Method:** `POST`
-- **Path:** `/auth/v1/logout` (Supabase)
-- **Description:** Invalidate user session
+- **Path:** `/api/auth/signout`
+- **Description:** Invalidate user session (proxies Supabase Auth)
 - **Headers:** `Authorization: Bearer <token>`
 - **Success Response:** `204 No Content`
+- **Error Responses:**
+  - `401 Unauthorized` - Missing or invalid token
+  - `500 Internal Server Error` - Supabase service error
+
+#### Refresh Token
+- **Method:** `POST`
+- **Path:** `/api/auth/refresh`
+- **Description:** Obtain new access token using refresh token
+- **Request Body:**
+```json
+{
+  "refresh_token": "..."
+}
+```
+- **Validation:**
+  - `refresh_token`: required, string
+- **Success Response:** `200 OK`
+```json
+{
+  "access_token": "eyJhbGc...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "refresh_token": "..."
+}
+```
+- **Error Responses:**
+  - `400 Bad Request` - Missing refresh token
+  - `401 Unauthorized` - Invalid or expired refresh token
+  - `500 Internal Server Error` - Supabase service error
 
 ---
 

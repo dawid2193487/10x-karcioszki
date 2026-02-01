@@ -1,0 +1,34 @@
+---
+import { HelpButton } from "./HelpButton";
+import { UserMenu } from "./UserMenu";
+
+interface Props {
+  user: {
+    id: string;
+    email?: string;
+  };
+}
+
+const { user } = Astro.props;
+---
+
+<nav class="bg-white border-b border-gray-200">
+  <div class="container mx-auto px-4 py-3">
+    <div class="flex items-center justify-between">
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-2 text-xl font-bold text-gray-900 hover:text-gray-700 transition-colors">
+        <span class="text-2xl">🎓</span>
+        <span>AI Flashcards</span>
+      </a>
+
+      <!-- Right side actions -->
+      <div class="flex items-center gap-3">
+        <!-- Help Button -->
+        <HelpButton client:load />
+
+        <!-- User Menu -->
+        <UserMenu user={user} client:load />
+      </div>
+    </div>
+  </div>
+</nav>

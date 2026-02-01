@@ -436,3 +436,49 @@ export interface FlashcardQueryParams extends PaginationQueryParams {
 export interface DueCardsQueryParams {
   limit?: number;
 }
+
+// ============================================================================
+// Authentication DTOs
+// ============================================================================
+
+/**
+ * Command for user sign up
+ * Used in POST /api/auth/signup request
+ */
+export interface SignUpCommand {
+  email: string;
+  password: string;
+}
+
+/**
+ * Command for user sign in
+ * Used in POST /api/auth/signin request
+ */
+export interface SignInCommand {
+  email: string;
+  password: string;
+}
+
+/**
+ * Command for refreshing access token
+ * Used in POST /api/auth/refresh request
+ */
+export interface RefreshTokenCommand {
+  refresh_token: string;
+}
+
+/**
+ * Response for authentication operations
+ * Used in POST /api/auth/signup, signin, and refresh responses
+ */
+export interface AuthResponseDTO {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number;
+  refresh_token: string;
+  user: {
+    id: string;
+    email: string;
+    created_at?: string;
+  };
+}

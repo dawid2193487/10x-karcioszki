@@ -1,0 +1,18 @@
+---
+import AuthLayout from "@/layouts/AuthLayout.astro";
+import LoginForm from "@/components/LoginForm";
+
+// Sprawdzenie czy użytkownik jest już zalogowany
+const {
+  data: { session },
+} = await Astro.locals.supabase.auth.getSession();
+
+// Jeśli użytkownik jest zalogowany, przekieruj na dashboard
+if (session) {
+  return Astro.redirect("/");
+}
+---
+
+<AuthLayout title="Logowanie - AI Flashcards">
+  <LoginForm client:load />
+</AuthLayout>

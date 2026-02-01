@@ -18,7 +18,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     } = await locals.supabase.auth.getUser();
 
     if (authError || !user) {
-      throw new ApiError("UNAUTHORIZED", "Authentication required. Please log in.", 401);
+      throw new ApiError("UNAUTHORIZED", "Authentication required. Please log in." + authError, 401);
     }
 
     // Parse and validate query parameters

@@ -1,0 +1,27 @@
+---
+import Layout from "./Layout.astro";
+import Navigation from "../components/Navigation.astro";
+import type { DeckListItemDTO } from "../types";
+
+interface Props {
+  user: {
+    id: string;
+    email?: string;
+  };
+  decks: DeckListItemDTO[];
+}
+
+const { user, decks } = Astro.props;
+---
+
+<Layout title="Dashboard - AI Flashcards">
+  <div class="min-h-screen bg-gray-50">
+    <!-- Navigation -->
+    <Navigation user={user} />
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
+      <slot />
+    </main>
+  </div>
+</Layout>

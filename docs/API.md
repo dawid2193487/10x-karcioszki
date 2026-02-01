@@ -2,9 +2,424 @@
 
 ## Table of Contents
 
-1. [Flashcard Management](#flashcard-management) - CRUD operations for flashcards
-2. [AI Flashcard Generation](#ai-flashcard-generation) - Generate flashcards using AI
-3. [AI Review Actions](#ai-review-actions) - Log user actions on AI-generated flashcards
+1. [Authentication](#authentication) - User registration and authentication
+2. [Flashcard Management](#flashcard-management) - CRUD operations for flashcards
+3. [AI Flashcard Generation](#ai-flashcard-generation) - Generate flashcards using AI
+4. [AI Review Actions](#ai-review-actions) - Log user actions on AI-generated flashcards
+
+---
+
+## Authentication
+
+API endpoints for user registration, authentication, and session management.
+
+### POST /api/auth/signup
+
+Register a new user with email and password.
+
+#### Request
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!"
+}
+```
+
+**Parameters:**
+- `email` (required): Valid email address
+- `password` (required): Password with minimum 8 characters
+
+#### Response
+
+**Success (200 OK):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "refresh_token": "xYzAbC123...",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "created_at": "2026-02-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+**400 Bad Request - Validation Error:**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "email",
+        "message": "Invalid email format"
+      }
+    ]
+  }
+}
+```
+
+**422 Unprocessable Entity - Email Already Registered:**
+```json
+{
+  "error": {
+    "code": "CONFLICT",
+    "message": "Email already registered"
+  }
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "An unexpected error occurred during sign up"
+  }
+}
+```
+
+#### Example Usage
+
+**cURL:**
+```bash
+curl -X POST http://localhost:4321/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+**JavaScript:**
+```javascript
+const response = await fetch('/api/auth/signup', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    email: 'user@example.com',
+    password: 'SecurePass123!'
+  })
+});
+
+const data = await response.json();
+console.log('Access token:', data.access_token);
+```
+
+---
+
+### POST /api/auth/signin
+
+Authenticate user with email and password.
+
+#### Request
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePass123!"
+}
+```
+
+**Parameters:**
+- `email` (required): Valid email address
+- `password` (required): User's password
+
+#### Response
+
+**Success (200 OK):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "refresh_token": "xYzAbC123...",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "created_at": "2026-02-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+**400 Bad Request - Validation Error:**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "password",
+        "message": "Password is required"
+      }
+    ]
+  }
+}
+```
+
+**401 Unauthorized - Invalid Credentials:**
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid credentials"
+  }
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "An unexpected error occurred during sign in"
+  }
+}
+```
+
+#### Example Usage
+
+**cURL:**
+```bash
+curl -X POST http://localhost:4321/api/auth/signin \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+**JavaScript:**
+```javascript
+const response = await fetch('/api/auth/signin', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    email: 'user@example.com',
+    password: 'SecurePass123!'
+  })
+});
+
+const data = await response.json();
+localStorage.setItem('access_token', data.access_token);
+localStorage.setItem('refresh_token', data.refresh_token);
+```
+
+---
+
+### POST /api/auth/signout
+
+Sign out current user and invalidate session.
+
+#### Authentication
+Required. Include Bearer token in Authorization header.
+
+#### Request
+
+**Headers:**
+```
+Authorization: Bearer <access_token>
+```
+
+#### Response
+
+**Success (204 No Content):**
+No response body.
+
+**Error Responses:**
+
+**401 Unauthorized - Missing Token:**
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Missing or invalid authorization token"
+  }
+}
+```
+
+**401 Unauthorized - Invalid Token:**
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Authentication failed"
+  }
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "An unexpected error occurred during sign out"
+  }
+}
+```
+
+#### Example Usage
+
+**cURL:**
+```bash
+curl -X POST http://localhost:4321/api/auth/signout \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**JavaScript:**
+```javascript
+const response = await fetch('/api/auth/signout', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+  }
+});
+
+if (response.ok) {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  console.log('Signed out successfully');
+}
+```
+
+---
+
+### POST /api/auth/refresh
+
+Refresh access token using refresh token.
+
+#### Request
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "refresh_token": "xYzAbC123..."
+}
+```
+
+**Parameters:**
+- `refresh_token` (required): Valid refresh token from signin/signup response
+
+#### Response
+
+**Success (200 OK):**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "refresh_token": "newXyZaBc456...",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "created_at": "2026-02-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+
+**400 Bad Request - Missing Token:**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "refresh_token",
+        "message": "Refresh token is required"
+      }
+    ]
+  }
+}
+```
+
+**401 Unauthorized - Invalid or Expired Token:**
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid or expired refresh token"
+  }
+}
+```
+
+**500 Internal Server Error:**
+```json
+{
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "An unexpected error occurred during token refresh"
+  }
+}
+```
+
+#### Example Usage
+
+**cURL:**
+```bash
+curl -X POST http://localhost:4321/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "YOUR_REFRESH_TOKEN"
+  }'
+```
+
+**JavaScript:**
+```javascript
+const response = await fetch('/api/auth/refresh', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    refresh_token: localStorage.getItem('refresh_token')
+  })
+});
+
+const data = await response.json();
+localStorage.setItem('access_token', data.access_token);
+localStorage.setItem('refresh_token', data.refresh_token);
+```
+
+#### Notes
+
+- Access tokens expire after the time specified in `expires_in` (typically 3600 seconds = 1 hour)
+- Use this endpoint to obtain a new access token without requiring the user to sign in again
+- The refresh token is also rotated and a new one is provided in the response
+- Store both tokens securely (e.g., in localStorage or secure cookies)
+- Implement automatic token refresh before the access token expires for seamless user experience
 
 ---
 
