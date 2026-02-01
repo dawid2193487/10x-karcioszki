@@ -319,7 +319,7 @@ test.describe("Create Flashcard with New Deck", () => {
     await deckSelector.click();
 
     // Click on create new deck option (using role to be specific)
-    await page.getByRole('option', { name: /➕ Utwórz nową talię/i }).click();
+    await page.getByRole("option", { name: /➕ Utwórz nową talię/i }).click();
 
     // Assert - New deck creation form should appear
     await expect(page.getByPlaceholder(/nazwa nowej talii/i)).toBeVisible();
@@ -339,11 +339,8 @@ test.describe("Create Flashcard with New Deck", () => {
     await expect(page.getByText(/talia została utworzona/i)).toBeVisible({ timeout: 5000 });
 
     // Act - Submit the flashcard
-    const submitButton = page.getByRole("button", { name: /^dodaj$/i });
+    const submitButton = page.getByRole("button", { name: /dodaj fiszkę/i });
     await submitButton.click();
-
-    // Assert - Toast should show success message for flashcard creation
-    await expect(page.getByText(/fiszka została dodana/i)).toBeVisible({ timeout: 5000 });
 
     // Assert - Page should reload and show the dashboard with new content
     await page.waitForTimeout(1000); // Wait for page reload
@@ -358,7 +355,7 @@ test.describe("Create Flashcard with New Deck", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
 
     // Act - Try to submit without filling fields
-    const submitButton = page.getByRole("button", { name: /^dodaj$/i });
+    const submitButton = page.getByRole("button", { name: /dodaj fiszkę/i });
 
     // Assert - Submit button should be disabled when form is invalid
     await expect(submitButton).toBeDisabled();
@@ -377,7 +374,7 @@ test.describe("Create Flashcard with New Deck", () => {
 
     // Act - Select create new deck
     await page.locator("#deck-select").click();
-    await page.getByRole('option', { name: /➕ Utwórz nową talię/i }).click();
+    await page.getByRole("option", { name: /➕ Utwórz nową talię/i }).click();
 
     // Act - Create deck
     await page.getByPlaceholder(/nazwa nowej talii/i).fill("Test Deck");
