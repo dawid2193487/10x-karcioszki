@@ -1,0 +1,23 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Navigation from "@/components/Navigation.astro";
+import AIReviewInterface from "@/components/AIReviewInterface";
+
+const supabase = Astro.locals.supabase;
+const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+if (authError || !user) {
+  return Astro.redirect("/login");
+}
+
+const pageTitle = "Recenzja wygenerowanych fiszek";
+---
+
+<Layout title={pageTitle}>
+  <div class="min-h-screen bg-gray-50">
+    <Navigation user={user} />
+    <main class="container mx-auto px-4 py-8">
+      <AIReviewInterface client:load />
+    </main>
+  </div>
+</Layout>

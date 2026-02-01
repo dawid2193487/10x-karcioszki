@@ -177,6 +177,16 @@ export function DeckCard({ deck }: DeckCardProps) {
           <Button
             variant="outline"
             size="icon"
+            onClick={() => window.location.href = `/decks/${deck.id}`}
+            title="Edytuj zestaw"
+            className="hover:bg-gray-50"
+          >
+            ✏️
+          </Button>
+
+          <Button
+            variant="outline"
+            size="icon"
             onClick={handleDeleteClick}
             title="Usuń talię"
             className="text-red-600 hover:text-red-700 hover:bg-red-50"

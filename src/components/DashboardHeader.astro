@@ -1,5 +1,6 @@
 ---
 import { CreateDeckButton } from "./CreateDeckButton";
+import { CreateFlashcardButton } from "./CreateFlashcardButton";
 ---
 
 <header class="mb-8">
@@ -12,6 +13,9 @@ import { CreateDeckButton } from "./CreateDeckButton";
 
     <!-- Actions -->
     <div class="flex items-center gap-3">
+      <!-- Add Flashcard Button -->
+      <CreateFlashcardButton client:load />
+
       <!-- Generate AI Button -->
       <a
         href="/generate"

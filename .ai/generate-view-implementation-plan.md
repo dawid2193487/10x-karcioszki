@@ -1,1466 +1,1547 @@
-# API Endpoint Implementation Plan: Generate Flashcards from Text
+# Plan implementacji widoku generowania fiszek przez AI
 
-## 1. Przegląd punktu końcowego
+## 1. Przegląd
 
-Endpoint `POST /api/ai/generate` umożliwia użytkownikom generowanie fiszek z dowolnego tekstu przy użyciu Google Gemini API. Jest to kluczowa funkcjonalność aplikacji, która pozwala na automatyczne tworzenie materiałów do nauki z artykułów, notatek czy innych źródeł tekstowych.
+Widok generowania fiszek przez AI składa się z dwóch kluczowych ekranów:
+1. **Formularz generowania (`/generate`)** - przyjmuje tekst edukacyjny od użytkownika i wysyła do API w celu wygenerowania propozycji fiszek
+2. **Widok recenzji (`/generate/review`)** - wyświetla wygenerowane fiszki i umożliwia ich akceptację, edycję lub odrzucenie przed ostatecznym zapisem
 
-**Główne cele:**
-- Akceptowanie tekstu źródłowego od użytkownika
-- Wysyłanie zapytania do Google Gemini API z odpowiednim promptem
-- Parsowanie odpowiedzi AI i zwracanie listy wygenerowanych fiszek (jako draft)
-- Rejestrowanie operacji generowania w bazie danych dla celów analitycznych
-- Ochrona przed nadużyciami poprzez rate limiting (10 req/min)
+Głównym celem jest umożliwienie użytkownikowi szybkiego przekształcenia materiału edukacyjnego w fiszki przy zachowaniu pełnej kontroli nad jakością końcowego materiału.
 
-**Kluczowe założenia:**
-- Endpoint zwraca fiszki jako draft - nie zapisuje ich automatycznie do bazy
-- Użytkownik może zaakceptować, edytować lub odrzucić wygenerowane fiszki w UI
-- Każda operacja generowania jest logowana dla metryk KPI
+## 2. Routing widoku
 
-## 2. Szczegóły żądania
+- **Formularz generowania**: `/generate` (strona Astro)
+- **Widok recenzji**: `/generate/review` (strona Astro)
 
-### Metoda HTTP
-`POST`
+Oba widoki wymagają uwierzytelnienia użytkownika (middleware przekieruje niezalogowanych użytkowników do `/login`).
 
-### Struktura URL
+## 3. Struktura komponentów
+
 ```
-/api/ai/generate
+generate.astro (Astro Layout)
+├── AIGenerateForm.tsx (React - główny formularz)
+│   ├── CharacterCounter.tsx (React - licznik znaków)
+│   ├── EstimatedCount.tsx (React - szacowana liczba fiszek)
+│   └── DeckSelector.tsx (React - istniejący komponent)
+
+review.astro (Astro Layout)
+└── AIReviewInterface.tsx (React - główny interfejs recenzji)
+    ├── ReviewHeader.tsx (React - header z licznikami i wyborem talii)
+    │   └── DeckSelector.tsx (React - istniejący komponent)
+    ├── FlashcardReviewCard.tsx (React - pojedyncza fiszka do recenzji)
+    │   ├── FlashcardEditMode.tsx (React - tryb edycji fiszki)
+    │   └── FlashcardActionButtons.tsx (React - przyciski akcji)
+    ├── ReviewProgress.tsx (React - pasek postępu i liczniki)
+    ├── ReviewSummary.tsx (React - podsumowanie po zakończeniu)
+    └── LoadingSpinner.tsx (React - podczas generowania)
 ```
 
-### Headers
-```
-Authorization: Bearer <token>
-Content-Type: application/json
-```
+## 4. Szczegóły komponentów
 
-### Parametry
+### 4.1 AIGenerateForm.tsx
 
-#### Request Body (JSON)
-**Wymagane:**
-- `text` (string): Tekst źródłowy do generowania fiszek
-  - Minimum: 100 znaków
-  - Maximum: 5000 znaków
-  - Format: dowolny tekst (artykuł, notatki, definicje, itp.)
+**Opis**: Główny formularz do wprowadzenia tekstu edukacyjnego i wywołania generowania fiszek przez AI.
 
-**Opcjonalne:**
-- `language` (string): Kod języka ISO 639-1
-  - Format: dwuliterowy kod (np. 'en', 'pl', 'es')
-  - Domyślnie: 'en'
-  - Walidacja: regex `/^[a-z]{2}$/`
+**Główne elementy HTML i komponenty**:
+- `<form>` - główny kontener formularza
+- `<Textarea>` (Shadcn/ui) - pole tekstowe do wprowadzenia materiału edukacyjnego
+- `CharacterCounter` - komponent wyświetlający licznik znaków
+- `EstimatedCount` - komponent wyświetlający szacowaną liczbę fiszek
+- `DeckSelector` - komponent wyboru/utworzenia talii
+- `<Button>` (Shadcn/ui) - przycisk "Generuj fiszki"
+- `LoadingSpinner` - wyświetlany podczas generowania
 
-#### Przykład Request Body
-```json
-{
-  "text": "The Spanish verb 'estar' is used to describe temporary states and locations. For example, '¿Cómo estás?' means 'How are you?'. Unlike 'ser', which describes permanent characteristics, 'estar' focuses on conditions that can change.",
-  "language": "en"
+**Obsługiwane interakcje**:
+- Wpisywanie tekstu w textarea (real-time update licznika)
+- Wybór talii z dropdown lub utworzenie nowej
+- Kliknięcie przycisku "Generuj fiszki"
+- Skrót klawiszowy `Ctrl+Enter` dla submitu (gdy walidacja OK)
+- Obsługa błędów API (toast notifications)
+
+**Warunki walidacji**:
+- Tekst: minimum 100 znaków, maksimum 5000 znaków
+- Talia: musi być wybrana (istniejąca lub nowo utworzona)
+- Submit disabled gdy:
+  - Tekst < 100 znaków
+  - Tekst > 5000 znaków
+  - Brak wybranej talii
+  - Trwa generowanie (loading state)
+
+**Typy**:
+- `GenerateFlashcardsCommand` - request body
+- `GenerateFlashcardsResponseDTO` - response z API
+- `DeckListItemDTO` - dla talii w selectorze
+- `ErrorResponseDTO` - dla błędów API
+
+**Propsy**:
+```typescript
+interface AIGenerateFormProps {
+  initialDeckId?: string; // Opcjonalna początkowa talia
 }
 ```
 
-## 3. Wykorzystywane typy
+### 4.2 CharacterCounter.tsx
 
-### DTOs i Command Models (z types.ts)
+**Opis**: Komponent wyświetlający licznik znaków z kolorową informacją zwrotną.
 
-#### Request
+**Główne elementy HTML**:
+- `<div>` z tekstem formatu "1,234 / 5,000 znaków"
+- Kolory zależne od walidacji
+
+**Obsługiwane interakcje**:
+- Brak (tylko wyświetlanie)
+- `aria-live="polite"` dla screen readers
+
+**Warunki walidacji**:
+- `< 100` znaków: kolor czerwony (text-destructive)
+- `100-5000` znaków: kolor zielony (text-success)
+- `> 5000` znaków: kolor czerwony (text-destructive)
+
+**Typy**: Brak niestandardowych typów
+
+**Propsy**:
 ```typescript
-GenerateFlashcardsCommand {
+interface CharacterCounterProps {
+  current: number;
+  max: number;
+  min: number;
+}
+```
+
+### 4.3 EstimatedCount.tsx
+
+**Opis**: Komponent wyświetlający szacowaną liczbę fiszek na podstawie długości tekstu.
+
+**Główne elementy HTML**:
+- `<p>` z tekstem formatu "Szacowana liczba fiszek: ~5"
+
+**Obsługiwane interakcje**:
+- Brak (tylko wyświetlanie)
+
+**Warunki walidacji**:
+- Formuła: `Math.max(1, Math.floor(textLength / 250))`
+
+**Typy**: Brak niestandardowych typów
+
+**Propsy**:
+```typescript
+interface EstimatedCountProps {
+  textLength: number;
+}
+```
+
+### 4.4 AIReviewInterface.tsx
+
+**Opis**: Główny interfejs recenzji wygenerowanych fiszek. Zarządza stanem wszystkich wygenerowanych fiszek i obsługuje akcje użytkownika.
+
+**Główne elementy HTML i komponenty**:
+- `ReviewHeader` - nagłówek z wyborem talii i licznikami
+- `ReviewProgress` - pasek postępu
+- `FlashcardReviewCard` - aktualna fiszka do recenzji
+- `ReviewSummary` - podsumowanie (widoczne po zakończeniu)
+- Keyboard handler dla skrótów klawiszowych
+
+**Obsługiwane interakcje**:
+- Nawigacja między fiszkami (Tab/Shift+Tab, strzałki)
+- Akceptacja fiszki (Enter, przycisk)
+- Edycja fiszki (E, przycisk)
+- Odrzucenie fiszki (Delete, przycisk)
+- Zmiana talii docelowej
+
+**Warunki walidacji**:
+- Talia musi być wybrana przed akceptacją fiszki
+
+**Typy**:
+- `GeneratedFlashcardDTO` - pojedyncza wygenerowana fiszka
+- `ReviewState` - stan recenzji (custom type)
+- `ReviewAction` - typ akcji (custom type)
+
+**Propsy**:
+```typescript
+interface AIReviewInterfaceProps {
+  generationLogId: string;
+  flashcards: GeneratedFlashcardDTO[];
+  initialDeckId?: string;
+}
+```
+
+### 4.5 ReviewHeader.tsx
+
+**Opis**: Nagłówek widoku recenzji z wyborem talii i licznikami.
+
+**Główne elementy HTML i komponenty**:
+- Tytuł "Recenzja wygenerowanych fiszek"
+- `DeckSelector` - wybór talii docelowej
+- Liczniki: aktualna pozycja / total, zaakceptowane, odrzucone
+
+**Obsługiwane interakcje**:
+- Zmiana talii przez `DeckSelector`
+
+**Warunki walidacji**:
+- Talia musi być wybrana
+
+**Typy**:
+- `ReviewStats` (custom type)
+
+**Propsy**:
+```typescript
+interface ReviewHeaderProps {
+  selectedDeckId: string | null;
+  onDeckSelect: (deckId: string) => void;
+  currentIndex: number;
+  total: number;
+  acceptedCount: number;
+  rejectedCount: number;
+}
+```
+
+### 4.6 FlashcardReviewCard.tsx
+
+**Opis**: Komponent pojedynczej fiszki w widoku recenzji z możliwością edycji.
+
+**Główne elementy HTML i komponenty**:
+- `<div>` z frontem i backiem fiszki
+- `FlashcardEditMode` - tryb edycji (conditional)
+- `FlashcardActionButtons` - przyciski akcji
+
+**Obsługiwane interakcje**:
+- Przełączanie do trybu edycji
+- Akceptacja (wysłanie do API)
+- Odrzucenie (lokalne, bez API)
+
+**Warunki walidacji**:
+- W trybie edycji: front i back wymagane (1-1000 znaków)
+
+**Typy**:
+- `GeneratedFlashcardDTO`
+- `EditedFlashcard` (custom type)
+
+**Propsy**:
+```typescript
+interface FlashcardReviewCardProps {
+  flashcard: GeneratedFlashcardDTO;
+  deckId: string;
+  generationLogId: string;
+  isActive: boolean;
+  onAccept: (flashcardId: string) => void;
+  onReject: (flashcardId: string) => void;
+  onEdit: (flashcardId: string, edited: EditedFlashcard) => void;
+}
+```
+
+### 4.7 FlashcardEditMode.tsx
+
+**Opis**: Inline edycja fiszki w widoku recenzji.
+
+**Główne elementy HTML**:
+- `<Input>` (Shadcn/ui) - pole edycji front
+- `<Textarea>` (Shadcn/ui) - pole edycji back
+- `<Button>` - Zapisz / Anuluj
+
+**Obsługiwane interakcje**:
+- Edycja tekstu
+- Zapisanie zmian (Enter)
+- Anulowanie (Esc)
+
+**Warunki walidacji**:
+- Front: 1-1000 znaków
+- Back: 1-1000 znaków
+
+**Typy**:
+- `EditedFlashcard` (custom type)
+
+**Propsy**:
+```typescript
+interface FlashcardEditModeProps {
+  originalFront: string;
+  originalBack: string;
+  onSave: (edited: EditedFlashcard) => void;
+  onCancel: () => void;
+}
+```
+
+### 4.8 FlashcardActionButtons.tsx
+
+**Opis**: Przyciski akcji dla fiszki w recenzji.
+
+**Główne elementy HTML**:
+- `<Button>` - Akceptuj (zielony)
+- `<Button>` - Edytuj (niebieski)
+- `<Button>` - Odrzuć (czerwony)
+
+**Obsługiwane interakcje**:
+- Kliknięcie przycisków
+- Keyboard shortcuts (Enter, E, Delete)
+
+**Warunki walidacji**: Brak
+
+**Typy**: Brak niestandardowych typów
+
+**Propsy**:
+```typescript
+interface FlashcardActionButtonsProps {
+  onAccept: () => void;
+  onEdit: () => void;
+  onReject: () => void;
+  isEditMode: boolean;
+  disabled: boolean;
+}
+```
+
+### 4.9 ReviewProgress.tsx
+
+**Opis**: Pasek postępu recenzji z wizualizacją.
+
+**Główne elementy HTML**:
+- `<div>` - progress bar
+- Liczniki: pozostało, zaakceptowane, odrzucone
+
+**Obsługiwane interakcje**: Brak (tylko wyświetlanie)
+
+**Warunki walidacji**: Brak
+
+**Typy**:
+- `ReviewStats` (custom type)
+
+**Propsy**:
+```typescript
+interface ReviewProgressProps {
+  current: number;
+  total: number;
+  acceptedCount: number;
+  rejectedCount: number;
+}
+```
+
+### 4.10 ReviewSummary.tsx
+
+**Opis**: Podsumowanie po zakończeniu recenzji wszystkich fiszek.
+
+**Główne elementy HTML**:
+- Statystyki: zaakceptowane, edytowane, odrzucone
+- Nazwa talii docelowej
+- `<Button>` - "Zamknij" (przekierowanie do talii)
+- `<Button>` - "Dodaj więcej fiszek" (powrót do formularza)
+
+**Obsługiwane interakcje**:
+- Kliknięcie przycisków nawigacyjnych
+
+**Warunki walidacji**: Brak
+
+**Typy**:
+- `ReviewSummaryData` (custom type)
+
+**Propsy**:
+```typescript
+interface ReviewSummaryProps {
+  acceptedCount: number;
+  editedCount: number;
+  rejectedCount: number;
+  deckId: string;
+  deckName: string;
+  onClose: () => void;
+  onAddMore: () => void;
+}
+```
+
+### 4.11 LoadingSpinner.tsx
+
+**Opis**: Komponent ładowania wyświetlany podczas generowania fiszek.
+
+**Główne elementy HTML**:
+- Spinner animation
+- Tekst "Generowanie fiszek..."
+
+**Obsługiwane interakcje**: Brak
+
+**Warunki walidacji**: Brak
+
+**Typy**: Brak niestandardowych typów
+
+**Propsy**:
+```typescript
+interface LoadingSpinnerProps {
+  message?: string;
+}
+```
+
+## 5. Typy
+
+### 5.1 Istniejące typy (z types.ts)
+
+```typescript
+// Request/Response dla API generowania
+export interface GenerateFlashcardsCommand {
   text: string;
   language?: string;
 }
-```
 
-#### Response
-```typescript
-GenerateFlashcardsResponseDTO {
+export interface GeneratedFlashcardDTO {
+  front: string;
+  back: string;
+}
+
+export interface GenerateFlashcardsResponseDTO {
   generation_log_id: string;
   flashcards: GeneratedFlashcardDTO[];
   count: number;
   estimated_count: number;
 }
 
-GeneratedFlashcardDTO {
+// Request/Response dla logowania akcji recenzji
+export type AiReviewActionType = "accepted" | "edited" | "rejected";
+
+export interface LogAiReviewActionCommand {
+  generation_log_id: string;
+  flashcard_id: string | null;
+  action_type: AiReviewActionType;
+  original_front: string;
+  original_back: string;
+  edited_front?: string;
+  edited_back?: string;
+}
+
+export interface AiReviewActionDTO {
+  id: string;
+  generation_log_id: string;
+  flashcard_id: string | null;
+  action_type: AiReviewActionType;
+  created_at: string;
+}
+
+// Tworzenie fiszki
+export interface CreateFlashcardCommand {
+  deck_id: string;
+  front: string;
+  back: string;
+  source: FlashcardSource; // "ai" | "manual"
+}
+
+export interface FlashcardDTO {
+  id: string;
+  deck_id: string;
+  front: string;
+  back: string;
+  source: FlashcardSource;
+  next_review_date: string | null;
+  easiness_factor: number | null;
+  interval: number | null;
+  repetitions: number | null;
+  last_reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 5.2 Nowe typy (ViewModels dla komponentów)
+
+```typescript
+// Stan pojedynczej fiszki w recenzji
+export interface ReviewFlashcard extends GeneratedFlashcardDTO {
+  id: string; // temporary ID dla zarządzania stanem
+  status: "pending" | "accepted" | "edited" | "rejected";
+  flashcardId?: string; // ID po zapisie w bazie (tylko dla accepted/edited)
+}
+
+// Stan edytowanej fiszki
+export interface EditedFlashcard {
   front: string;
   back: string;
 }
+
+// Stan całej recenzji
+export interface ReviewState {
+  flashcards: ReviewFlashcard[];
+  currentIndex: number;
+  selectedDeckId: string | null;
+  generationLogId: string;
+  isLoading: boolean;
+  error: string | null;
+}
+
+// Statystyki recenzji
+export interface ReviewStats {
+  total: number;
+  current: number;
+  accepted: number;
+  edited: number;
+  rejected: number;
+  remaining: number;
+}
+
+// Dane podsumowania
+export interface ReviewSummaryData {
+  acceptedCount: number;
+  editedCount: number;
+  rejectedCount: number;
+  deckId: string;
+  deckName: string;
+}
+
+// Stan formularza generowania
+export interface GenerateFormState {
+  text: string;
+  selectedDeckId: string | null;
+  isGenerating: boolean;
+  error: string | null;
+}
+
+// Walidacja formularza
+export interface GenerateFormValidation {
+  isValid: boolean;
+  errors: {
+    text?: string;
+    deck?: string;
+  };
+}
 ```
 
-#### Database
+## 6. Zarządzanie stanem
+
+### 6.1 AIGenerateForm - useState
+
+Stan lokalny zarządzany przez `useState`:
+
 ```typescript
-AiGenerationLogInsert {
-  user_id: string;
-  input_text: string;
-  input_length: number;
-  generated_count: number;
-  created_at?: string; // auto-generated
-}
+const [text, setText] = useState<string>("");
+const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
+const [isGenerating, setIsGenerating] = useState<boolean>(false);
+const [error, setError] = useState<string | null>(null);
 ```
 
-#### Error Handling
+Obliczenia derived state:
+- `characterCount = text.length`
+- `estimatedCount = Math.max(1, Math.floor(text.length / 250))`
+- `isValid = text.length >= 100 && text.length <= 5000 && selectedDeckId !== null`
+
+### 6.2 AIReviewInterface - Custom Hook: useReviewState
+
+Ze względu na złożoność logiki recenzji, zalecane jest utworzenie custom hook `useReviewState`:
+
 ```typescript
-ErrorResponseDTO {
-  error: {
-    code: ErrorCode;
-    message: string;
-    details?: ErrorDetail[];
-  }
-}
-
-type ErrorCode = 
-  | "VALIDATION_ERROR"
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "RATE_LIMIT_EXCEEDED"
-  | "AI_SERVICE_ERROR"
-  | "INTERNAL_ERROR";
-```
-
-## 4. Szczegóły odpowiedzi
-
-### Success Response (200 OK)
-```json
-{
-  "generation_log_id": "550e8400-e29b-41d4-a716-446655440000",
-  "flashcards": [
-    {
-      "front": "What is the Spanish verb 'estar' used for?",
-      "back": "To describe temporary states and locations"
-    },
-    {
-      "front": "What does '¿Cómo estás?' mean in English?",
-      "back": "How are you?"
-    },
-    {
-      "front": "What is the main difference between 'estar' and 'ser'?",
-      "back": "'Estar' describes temporary conditions that can change, while 'ser' describes permanent characteristics"
-    }
-  ],
-  "count": 3,
-  "estimated_count": 3
-}
-```
-
-### Error Responses
-
-#### 400 Bad Request - Validation Error
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "text",
-        "message": "Text must be between 100 and 5000 characters"
-      }
-    ]
-  }
-}
-```
-
-#### 401 Unauthorized
-```json
-{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "message": "Missing or invalid authentication token"
-  }
-}
-```
-
-#### 429 Too Many Requests
-```json
-{
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Rate limit exceeded. Maximum 10 requests per minute allowed."
-  }
-}
-```
-
-#### 500 Internal Server Error
-```json
-{
-  "error": {
-    "code": "AI_SERVICE_ERROR",
-    "message": "Failed to generate flashcards. Please try again."
-  }
-}
-```
-
-#### 503 Service Unavailable
-```json
-{
-  "error": {
-    "code": "AI_SERVICE_ERROR",
-    "message": "AI service is temporarily unavailable. Please try again later."
-  }
-}
-```
-
-## 5. Przepływ danych
-
-### Diagram przepływu
-```
-1. Client Request
-   ↓
-2. Astro Middleware (Authentication)
-   ↓
-3. Route Handler (POST /api/ai/generate)
-   ↓
-4. Rate Limiter Check
-   ↓
-5. Zod Validation (Request Body)
-   ↓
-6. AI Flashcard Generator Service
-   ├─→ 6a. Format Prompt for Gemini
-   ├─→ 6b. Call Gemini API
-   ├─→ 6c. Parse AI Response
-   └─→ 6d. Extract Flashcards
-   ↓
-7. AI Generation Log Service
-   └─→ Save to ai_generation_logs table
-   ↓
-8. Format Response DTO
-   ↓
-9. Return 200 OK with flashcards
-```
-
-### Szczegółowy opis kroków
-
-#### 1. Autoryzacja (Middleware)
-- Weryfikacja tokenu Bearer w header Authorization
-- Pobranie user_id z Supabase auth
-- Odrzucenie żądania jeśli brak/nieprawidłowy token (401)
-
-#### 2. Rate Limiting
-- Sprawdzenie liczby żądań dla user_id w ostatniej minucie
-- Implementacja: in-memory cache z TTL 60s lub Redis
-- Odrzucenie żądania jeśli limit przekroczony (429)
-
-#### 3. Walidacja danych wejściowych (Zod)
-```typescript
-const schema = z.object({
-  text: z.string()
-    .min(100, "Text must be at least 100 characters")
-    .max(5000, "Text must not exceed 5000 characters"),
-  language: z.string()
-    .regex(/^[a-z]{2}$/, "Invalid language code")
-    .optional()
-    .default('en')
-});
-```
-
-#### 4. Generowanie fiszek (AI Service)
-- Przygotowanie prompta dla Gemini API:
-  ```
-  You are an expert flashcard creator. Generate educational flashcards from the following text.
-  
-  Instructions:
-  - Create clear, concise question-answer pairs
-  - Focus on key concepts and facts
-  - Front: Ask a specific question
-  - Back: Provide a clear, complete answer
-  - Generate 2-5 flashcards depending on content complexity
-  
-  Input language: {language}
-  Text: {text}
-  
-  Return ONLY a JSON array of objects with "front" and "back" properties.
-  ```
-
-- Wywołanie Gemini API:
-  ```typescript
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': import.meta.env.GEMINI_API_KEY
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048
-      }
-    })
+function useReviewState(
+  initialFlashcards: GeneratedFlashcardDTO[],
+  generationLogId: string,
+  initialDeckId?: string
+) {
+  const [state, setState] = useState<ReviewState>({
+    flashcards: initialFlashcards.map((f, index) => ({
+      ...f,
+      id: `temp-${index}`,
+      status: "pending",
+    })),
+    currentIndex: 0,
+    selectedDeckId: initialDeckId || null,
+    generationLogId,
+    isLoading: false,
+    error: null,
   });
-  ```
 
-- Parsowanie odpowiedzi:
-  - Wyciągnięcie tekstu z response.candidates[0].content.parts[0].text
-  - Parse JSON do GeneratedFlashcardDTO[]
-  - Walidacja struktury (każdy obiekt musi mieć front i back)
-  - Fallback jeśli parsowanie się nie uda
+  // Akcje
+  const acceptFlashcard = async (tempId: string) => { /* ... */ };
+  const editFlashcard = async (tempId: string, edited: EditedFlashcard) => { /* ... */ };
+  const rejectFlashcard = (tempId: string) => { /* ... */ };
+  const navigateNext = () => { /* ... */ };
+  const navigatePrev = () => { /* ... */ };
+  const setDeck = (deckId: string) => { /* ... */ };
 
-#### 5. Logowanie do bazy danych
-```typescript
-const logData: AiGenerationLogInsert = {
-  user_id: userId,
-  input_text: validatedInput.text,
-  input_length: validatedInput.text.length,
-  generated_count: flashcards.length
-};
+  // Computed values
+  const stats = useMemo(() => calculateStats(state), [state]);
+  const isComplete = useMemo(() => checkIfComplete(state), [state]);
+  const currentFlashcard = state.flashcards[state.currentIndex];
 
-const { data, error } = await supabase
-  .from('ai_generation_logs')
-  .insert(logData)
-  .select('id')
-  .single();
+  return {
+    state,
+    currentFlashcard,
+    stats,
+    isComplete,
+    acceptFlashcard,
+    editFlashcard,
+    rejectFlashcard,
+    navigateNext,
+    navigatePrev,
+    setDeck,
+  };
+}
 ```
 
-#### 6. Formatowanie odpowiedzi
+### 6.3 Keyboard Handlers - Custom Hook: useKeyboardShortcuts
+
+Dla obu widoków zalecany jest custom hook do obsługi skrótów klawiszowych:
+
 ```typescript
-const response: GenerateFlashcardsResponseDTO = {
-  generation_log_id: logData.id,
-  flashcards: flashcards,
-  count: flashcards.length,
-  estimated_count: flashcards.length
-};
-```
+function useKeyboardShortcuts(handlers: {
+  onEnter?: () => void;
+  onSpace?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
+  onEscape?: () => void;
+}, enabled: boolean = true) {
+  useEffect(() => {
+    if (!enabled) return;
 
-## 6. Względy bezpieczeństwa
-
-### 1. Autoryzacja
-- **Implementacja:** Middleware Astro weryfikuje token Bearer
-- **Źródło user_id:** `context.locals.supabase.auth.getUser()`
-- **Ochrona:** Każde żądanie wymaga poprawnego tokenu sesji
-- **Błąd:** 401 Unauthorized jeśli brak/nieprawidłowy token
-
-### 2. Rate Limiting
-- **Limit:** 10 żądań na minutę na użytkownika
-- **Identyfikacja:** Na podstawie user_id z tokenu
-- **Implementacja:** 
-  ```typescript
-  // In-memory cache with TTL
-  const rateLimitCache = new Map<string, { count: number; resetAt: number }>();
-  
-  function checkRateLimit(userId: string): boolean {
-    const now = Date.now();
-    const userLimit = rateLimitCache.get(userId);
-    
-    if (!userLimit || now > userLimit.resetAt) {
-      rateLimitCache.set(userId, { count: 1, resetAt: now + 60000 });
-      return true;
-    }
-    
-    if (userLimit.count >= 10) {
-      return false;
-    }
-    
-    userLimit.count++;
-    return true;
-  }
-  ```
-- **Błąd:** 429 Too Many Requests
-- **Headers w odpowiedzi:**
-  ```
-  X-RateLimit-Limit: 10
-  X-RateLimit-Remaining: 7
-  X-RateLimit-Reset: 1643725200
-  ```
-
-### 3. Walidacja danych wejściowych
-- **Biblioteka:** Zod
-- **Walidacje:**
-  - `text`: długość 100-5000 znaków (zapobiega spamowi i nadużyciom)
-  - `language`: format ISO 639-1 (tylko małe litery, dokładnie 2 znaki)
-- **Sanityzacja:** Trim whitespace, escape HTML jeśli potrzebne
-- **Błąd:** 400 Bad Request z szczegółami walidacji
-
-### 4. API Key Security
-- **Przechowywanie:** Gemini API key w zmiennej środowiskowej
-- **Dostęp:** `import.meta.env.GEMINI_API_KEY`
-- **Nigdy:** Nie wysyłać API key do klienta
-- **Walidacja:** Sprawdzenie czy klucz istnieje przy starcie aplikacji
-
-### 5. Prompt Injection Protection
-- **Zagrożenie:** Użytkownik może próbować manipulować promptem AI
-- **Ochrona:**
-  - Jasne oddzielenie instrukcji systemowych od input użytkownika
-  - Użycie structured output (JSON) zamiast free-form text
-  - Walidacja formatu odpowiedzi AI
-  - Filtrowanie potencjalnie niebezpiecznych znaków
-
-### 6. SQL Injection Prevention
-- **Ochrona:** Używanie Supabase client z parametryzowanymi zapytaniami
-- **Praktyka:** Nigdy nie konstruować SQL string ręcznie
-
-### 7. Data Privacy
-- **RODO:** Tekst wejściowy jest zapisywany w bazie (ai_generation_logs)
-- **Retencja:** Rozważyć automatyczne usuwanie starych logów (np. po 90 dniach)
-- **Zgodność:** Informować użytkowników o przetwarzaniu danych
-
-## 7. Obsługa błędów
-
-### Scenariusze błędów i odpowiedzi
-
-#### 1. Błędy walidacji (400 Bad Request)
-
-**Przypadek: Tekst zbyt krótki**
-```typescript
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "text",
-        "message": "Text must be at least 100 characters"
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignoruj gdy focus na input/textarea
+      if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) {
+        return;
       }
-    ]
-  }
-}
-```
 
-**Przypadek: Tekst zbyt długi**
-```typescript
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "text",
-        "message": "Text must not exceed 5000 characters"
-      }
-    ]
-  }
-}
-```
-
-**Przypadek: Nieprawidłowy kod języka**
-```typescript
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "language",
-        "message": "Invalid language code. Use ISO 639-1 format (e.g., 'en', 'pl')"
-      }
-    ]
-  }
-}
-```
-
-**Implementacja:**
-```typescript
-try {
-  const validatedData = schema.parse(await request.json());
-} catch (error) {
-  if (error instanceof z.ZodError) {
-    return new Response(JSON.stringify({
-      error: {
-        code: "VALIDATION_ERROR",
-        message: "Invalid input data",
-        details: error.errors.map(e => ({
-          field: e.path.join('.'),
-          message: e.message
-        }))
-      }
-    }), { status: 400 });
-  }
-}
-```
-
-#### 2. Błędy autoryzacji (401 Unauthorized)
-
-**Przypadek: Brak tokenu**
-```typescript
-{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "message": "Missing authentication token"
-  }
-}
-```
-
-**Przypadek: Nieprawidłowy token**
-```typescript
-{
-  "error": {
-    "code": "UNAUTHORIZED",
-    "message": "Invalid or expired authentication token"
-  }
-}
-```
-
-**Implementacja:**
-```typescript
-const { data: { user }, error } = await context.locals.supabase.auth.getUser();
-
-if (error || !user) {
-  return new Response(JSON.stringify({
-    error: {
-      code: "UNAUTHORIZED",
-      message: "Missing or invalid authentication token"
-    }
-  }), { status: 401 });
-}
-```
-
-#### 3. Błędy rate limiting (429 Too Many Requests)
-
-```typescript
-{
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Rate limit exceeded. Maximum 10 requests per minute allowed. Please try again in 45 seconds."
-  }
-}
-```
-
-**Implementacja:**
-```typescript
-const rateLimitOk = checkRateLimit(user.id);
-
-if (!rateLimitOk) {
-  const resetAt = getRateLimitReset(user.id);
-  const waitSeconds = Math.ceil((resetAt - Date.now()) / 1000);
-  
-  return new Response(JSON.stringify({
-    error: {
-      code: "RATE_LIMIT_EXCEEDED",
-      message: `Rate limit exceeded. Maximum 10 requests per minute allowed. Please try again in ${waitSeconds} seconds.`
-    }
-  }), { 
-    status: 429,
-    headers: {
-      'X-RateLimit-Limit': '10',
-      'X-RateLimit-Remaining': '0',
-      'X-RateLimit-Reset': resetAt.toString(),
-      'Retry-After': waitSeconds.toString()
-    }
-  });
-}
-```
-
-#### 4. Błędy AI Service (500/503)
-
-**Przypadek: Timeout Gemini API**
-```typescript
-{
-  "error": {
-    "code": "AI_SERVICE_ERROR",
-    "message": "AI service request timed out. Please try again with shorter text."
-  }
-}
-```
-
-**Przypadek: Błąd parsowania odpowiedzi AI**
-```typescript
-{
-  "error": {
-    "code": "AI_SERVICE_ERROR",
-    "message": "Failed to parse AI response. Please try again."
-  }
-}
-```
-
-**Przypadek: API niedostępne**
-```typescript
-{
-  "error": {
-    "code": "AI_SERVICE_ERROR",
-    "message": "AI service is temporarily unavailable. Please try again later."
-  }
-}
-```
-
-**Implementacja:**
-```typescript
-try {
-  const flashcards = await aiFlashcardGenerator.generate(text, language);
-} catch (error) {
-  console.error('AI generation error:', error);
-  
-  if (error instanceof TimeoutError) {
-    return new Response(JSON.stringify({
-      error: {
-        code: "AI_SERVICE_ERROR",
-        message: "AI service request timed out. Please try again with shorter text."
-      }
-    }), { status: 500 });
-  }
-  
-  if (error instanceof NetworkError) {
-    return new Response(JSON.stringify({
-      error: {
-        code: "AI_SERVICE_ERROR",
-        message: "AI service is temporarily unavailable. Please try again later."
-      }
-    }), { status: 503 });
-  }
-  
-  // Generic error
-  return new Response(JSON.stringify({
-    error: {
-      code: "AI_SERVICE_ERROR",
-      message: "Failed to generate flashcards. Please try again."
-    }
-  }), { status: 500 });
-}
-```
-
-#### 5. Błędy bazy danych (500)
-
-**Przypadek: Błąd zapisu logu**
-```typescript
-{
-  "error": {
-    "code": "INTERNAL_ERROR",
-    "message": "Failed to save generation log. Please try again."
-  }
-}
-```
-
-**Implementacja:**
-```typescript
-const { data: log, error: logError } = await supabase
-  .from('ai_generation_logs')
-  .insert(logData)
-  .select('id')
-  .single();
-
-if (logError) {
-  console.error('Database error:', logError);
-  return new Response(JSON.stringify({
-    error: {
-      code: "INTERNAL_ERROR",
-      message: "Failed to save generation log. Please try again."
-    }
-  }), { status: 500 });
-}
-```
-
-### Error Logging Strategy
-
-Wszystkie błędy powinny być logowane z odpowiednim poziomem szczegółowości:
-
-```typescript
-// Error logger helper
-function logError(context: string, error: unknown, metadata?: object) {
-  console.error(`[${context}]`, {
-    error: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
-    timestamp: new Date().toISOString(),
-    ...metadata
-  });
-}
-
-// Przykład użycia
-logError('AI_GENERATION', error, {
-  userId: user.id,
-  textLength: text.length,
-  language: language
-});
-```
-
-## 8. Rozważania dotyczące wydajności
-
-### Potencjalne wąskie gardła
-
-#### 1. Gemini API Response Time
-- **Problem:** Generowanie fiszek przez AI może trwać 2-10 sekund
-- **Wpływ:** Długi czas odpowiedzi dla użytkownika
-- **Rozwiązanie:**
-  - Timeout 30 sekund dla API call
-  - Loading state w UI z informacją o procesie
-  - Optymalizacja prompta dla szybszych odpowiedzi
-  - Rozważyć async processing dla bardzo długich tekstów
-
-#### 2. Rate Limiting Implementation
-- **Problem:** In-memory cache nie skaluje się w środowisku multi-instance
-- **Rozwiązanie krótkoterminowe:** In-memory Map z TTL
-- **Rozwiązanie długoterminowe:** Redis dla distributed rate limiting
-  ```typescript
-  // Redis implementation
-  async function checkRateLimitRedis(userId: string): Promise<boolean> {
-    const key = `ratelimit:ai-generate:${userId}`;
-    const current = await redis.incr(key);
-    
-    if (current === 1) {
-      await redis.expire(key, 60);
-    }
-    
-    return current <= 10;
-  }
-  ```
-
-#### 3. Database Writes
-- **Problem:** Każde żądanie zapisuje do ai_generation_logs
-- **Wpływ:** Potencjalnie wolne zapisy przy dużym ruchu
-- **Rozwiązanie:**
-  - Indeksowanie na user_id i created_at dla analytics queries
-  - Archiwizacja starych logów (np. po 90 dniach)
-  - Monitoring database performance
-
-#### 4. Prompt Size vs Quality
-- **Balans:** Dłuższy prompt = lepsza jakość fiszek, ale wolniejsza odpowiedź
-- **Optymalizacja:**
-  - Testowanie różnych długości promptów
-  - A/B testing na jakości output
-  - Monitorowanie średniego czasu odpowiedzi
-
-### Strategie optymalizacji
-
-#### 1. Caching
-```typescript
-// Cache dla często używanych tekstów (opcjonalne)
-const generationCache = new LRU<string, GenerateFlashcardsResponseDTO>({
-  max: 100,
-  ttl: 1000 * 60 * 60 // 1 godzina
-});
-
-// Użycie hash tekstu jako klucz
-const cacheKey = createHash('sha256').update(text).digest('hex');
-const cached = generationCache.get(cacheKey);
-
-if (cached) {
-  return new Response(JSON.stringify(cached), { status: 200 });
-}
-```
-
-#### 2. Streaming Response (przyszła optymalizacja)
-```typescript
-// Przyszła wersja: streaming fiszek po kolei
-async function* streamFlashcards(text: string, language: string) {
-  // Generate i yield fiszki jedna po drugiej
-  // Pozwala na szybszy first paint w UI
-}
-```
-
-#### 3. Monitoring i Metryki
-```typescript
-// Zbieranie metryk wydajności
-const metrics = {
-  aiResponseTime: 0,
-  dbWriteTime: 0,
-  totalTime: 0,
-  flashcardsCount: 0
-};
-
-// Użycie dla alertów jeśli czas przekroczy próg
-if (metrics.aiResponseTime > 10000) {
-  console.warn('Slow AI response detected', metrics);
-}
-```
-
-#### 4. Graceful Degradation
-```typescript
-// Fallback jeśli AI nie odpowiada
-const TIMEOUT = 30000;
-
-const flashcardsPromise = aiFlashcardGenerator.generate(text, language);
-const timeoutPromise = new Promise((_, reject) => 
-  setTimeout(() => reject(new TimeoutError()), TIMEOUT)
-);
-
-try {
-  const flashcards = await Promise.race([flashcardsPromise, timeoutPromise]);
-} catch (error) {
-  // Return user-friendly error
-}
-```
-
-## 9. Kroki implementacji
-
-### Faza 1: Setup i infrastruktura (45 min)
-
-#### 1.1 Utworzenie struktury plików
-```bash
-src/
-├── pages/
-│   └── api/
-│       └── ai/
-│           └── generate.ts          # API endpoint
-├── lib/
-│   ├── services/
-│   │   ├── ai-flashcard-generator.service.ts
-│   │   ├── ai-generation-log.service.ts
-│   │   └── rate-limiter.service.ts
-│   ├── schemas/
-│   │   └── ai-generation.schema.ts  # Zod schemas
-│   └── utils/
-│       ├── error-handler.ts
-│       └── gemini-client.ts
-```
-
-#### 1.2 Konfiguracja zmiennych środowiskowych
-```env
-# .env
-GEMINI_API_KEY=your_api_key_here
-GEMINI_API_URL=https://generativelanguage.googleapis.com/v1beta
-```
-
-#### 1.3 Instalacja zależności (jeśli potrzebne)
-```bash
-npm install zod
-# Rate limiting: opcjonalnie redis
-```
-
-### Faza 2: Implementacja serwisów (90 min)
-
-#### 2.1 Rate Limiter Service
-```typescript
-// src/lib/services/rate-limiter.service.ts
-
-interface RateLimitConfig {
-  maxRequests: number;
-  windowMs: number;
-}
-
-interface RateLimitInfo {
-  count: number;
-  resetAt: number;
-}
-
-class RateLimiterService {
-  private cache = new Map<string, RateLimitInfo>();
-  
-  constructor(private config: RateLimitConfig) {}
-  
-  check(userId: string): { 
-    allowed: boolean; 
-    remaining: number; 
-    resetAt: number 
-  } {
-    const now = Date.now();
-    const userLimit = this.cache.get(userId);
-    
-    // Reset if window expired
-    if (!userLimit || now > userLimit.resetAt) {
-      const resetAt = now + this.config.windowMs;
-      this.cache.set(userId, { count: 1, resetAt });
-      return { 
-        allowed: true, 
-        remaining: this.config.maxRequests - 1, 
-        resetAt 
-      };
-    }
-    
-    // Check limit
-    const allowed = userLimit.count < this.config.maxRequests;
-    
-    if (allowed) {
-      userLimit.count++;
-    }
-    
-    return {
-      allowed,
-      remaining: Math.max(0, this.config.maxRequests - userLimit.count),
-      resetAt: userLimit.resetAt
-    };
-  }
-  
-  cleanup() {
-    const now = Date.now();
-    for (const [userId, limit] of this.cache.entries()) {
-      if (now > limit.resetAt) {
-        this.cache.delete(userId);
-      }
-    }
-  }
-}
-
-export const aiGenerationRateLimiter = new RateLimiterService({
-  maxRequests: 10,
-  windowMs: 60000 // 1 minute
-});
-
-// Cleanup expired entries every 5 minutes
-setInterval(() => aiGenerationRateLimiter.cleanup(), 300000);
-```
-
-#### 2.2 Gemini Client Utility
-```typescript
-// src/lib/utils/gemini-client.ts
-
-interface GeminiRequest {
-  prompt: string;
-  temperature?: number;
-  maxOutputTokens?: number;
-}
-
-interface GeminiResponse {
-  candidates: Array<{
-    content: {
-      parts: Array<{ text: string }>;
-    };
-  }>;
-}
-
-export class GeminiClient {
-  private apiKey: string;
-  private baseUrl: string;
-  
-  constructor() {
-    this.apiKey = import.meta.env.GEMINI_API_KEY;
-    this.baseUrl = import.meta.env.GEMINI_API_URL || 
-                   'https://generativelanguage.googleapis.com/v1beta';
-    
-    if (!this.apiKey) {
-      throw new Error('GEMINI_API_KEY is not configured');
-    }
-  }
-  
-  async generateContent(request: GeminiRequest): Promise<string> {
-    const url = `${this.baseUrl}/models/gemini-pro:generateContent`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: request.prompt }]
-        }],
-        generationConfig: {
-          temperature: request.temperature ?? 0.7,
-          maxOutputTokens: request.maxOutputTokens ?? 2048
-        }
-      }),
-      signal: AbortSignal.timeout(30000) // 30s timeout
-    });
-    
-    if (!response.ok) {
-      if (response.status === 503) {
-        throw new ServiceUnavailableError('Gemini API is temporarily unavailable');
-      }
-      throw new GeminiApiError(`Gemini API error: ${response.statusText}`);
-    }
-    
-    const data: GeminiResponse = await response.json();
-    
-    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
-      throw new GeminiApiError('Invalid response format from Gemini API');
-    }
-    
-    return data.candidates[0].content.parts[0].text;
-  }
-}
-
-export class GeminiApiError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'GeminiApiError';
-  }
-}
-
-export class ServiceUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ServiceUnavailableError';
-  }
-}
-```
-
-#### 2.3 AI Flashcard Generator Service
-```typescript
-// src/lib/services/ai-flashcard-generator.service.ts
-
-import type { GeneratedFlashcardDTO } from '@/types';
-import { GeminiClient } from '@/lib/utils/gemini-client';
-
-export class AiFlashcardGeneratorService {
-  private geminiClient: GeminiClient;
-  
-  constructor() {
-    this.geminiClient = new GeminiClient();
-  }
-  
-  async generate(text: string, language: string = 'en'): Promise<GeneratedFlashcardDTO[]> {
-    const prompt = this.buildPrompt(text, language);
-    
-    try {
-      const responseText = await this.geminiClient.generateContent({
-        prompt,
-        temperature: 0.7,
-        maxOutputTokens: 2048
-      });
-      
-      return this.parseResponse(responseText);
-    } catch (error) {
-      console.error('AI generation failed:', error);
-      throw error;
-    }
-  }
-  
-  private buildPrompt(text: string, language: string): string {
-    return `You are an expert flashcard creator. Generate educational flashcards from the following text.
-
-Instructions:
-- Create clear, concise question-answer pairs
-- Focus on key concepts, facts, and important details
-- Front: Ask a specific, focused question
-- Back: Provide a clear, complete answer
-- Generate 2-5 flashcards depending on content complexity
-- Questions should test understanding, not just memory
-
-Input language: ${language}
-Text to analyze:
-"""
-${text}
-"""
-
-Return ONLY a valid JSON array of objects with "front" and "back" properties.
-Example format:
-[
-  {"front": "Question here?", "back": "Answer here"},
-  {"front": "Another question?", "back": "Another answer"}
-]`;
-  }
-  
-  private parseResponse(responseText: string): GeneratedFlashcardDTO[] {
-    // Extract JSON from response (AI might add markdown code blocks)
-    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-    
-    if (!jsonMatch) {
-      throw new Error('Failed to extract JSON from AI response');
-    }
-    
-    const flashcards = JSON.parse(jsonMatch[0]);
-    
-    // Validate structure
-    if (!Array.isArray(flashcards)) {
-      throw new Error('AI response is not an array');
-    }
-    
-    const validated: GeneratedFlashcardDTO[] = flashcards
-      .filter(card => 
-        typeof card === 'object' &&
-        typeof card.front === 'string' &&
-        typeof card.back === 'string' &&
-        card.front.trim().length > 0 &&
-        card.back.trim().length > 0
-      )
-      .map(card => ({
-        front: card.front.trim(),
-        back: card.back.trim()
-      }));
-    
-    if (validated.length === 0) {
-      throw new Error('No valid flashcards in AI response');
-    }
-    
-    return validated;
-  }
-}
-
-export const aiFlashcardGenerator = new AiFlashcardGeneratorService();
-```
-
-#### 2.4 AI Generation Log Service
-```typescript
-// src/lib/services/ai-generation-log.service.ts
-
-import type { SupabaseClient } from '@/db/supabase.client';
-import type { AiGenerationLogInsert } from '@/types';
-
-export class AiGenerationLogService {
-  constructor(private supabase: SupabaseClient) {}
-  
-  async create(data: AiGenerationLogInsert): Promise<string> {
-    const { data: log, error } = await this.supabase
-      .from('ai_generation_logs')
-      .insert({
-        user_id: data.user_id,
-        input_text: data.input_text,
-        input_length: data.input_length,
-        generated_count: data.generated_count
-      })
-      .select('id')
-      .single();
-    
-    if (error) {
-      console.error('Failed to create AI generation log:', error);
-      throw new Error('Database error: Failed to save generation log');
-    }
-    
-    return log.id;
-  }
-}
-```
-
-### Faza 3: Zod validation schema (15 min)
-
-```typescript
-// src/lib/schemas/ai-generation.schema.ts
-
-import { z } from 'zod';
-
-export const generateFlashcardsSchema = z.object({
-  text: z.string()
-    .min(100, 'Text must be at least 100 characters long')
-    .max(5000, 'Text must not exceed 5000 characters'),
-  language: z.string()
-    .regex(/^[a-z]{2}$/, 'Language must be a valid ISO 639-1 code (e.g., "en", "pl")')
-    .optional()
-    .default('en')
-});
-
-export type GenerateFlashcardsInput = z.infer<typeof generateFlashcardsSchema>;
-```
-
-### Faza 4: Error handling utilities (15 min)
-
-```typescript
-// src/lib/utils/error-handler.ts
-
-import type { ErrorResponseDTO, ErrorCode } from '@/types';
-
-export class ApiError extends Error {
-  constructor(
-    public code: ErrorCode,
-    message: string,
-    public statusCode: number,
-    public details?: Array<{ field: string; message: string }>
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-  
-  toResponse(): Response {
-    const body: ErrorResponseDTO = {
-      error: {
-        code: this.code,
-        message: this.message,
-        ...(this.details && { details: this.details })
+      switch (e.key) {
+        case "Enter":
+          if (e.ctrlKey) handlers.onEnter?.();
+          break;
+        case " ":
+          e.preventDefault();
+          handlers.onSpace?.();
+          break;
+        case "e":
+        case "E":
+          handlers.onEdit?.();
+          break;
+        case "Delete":
+          handlers.onDelete?.();
+          break;
+        case "Tab":
+          e.preventDefault();
+          e.shiftKey ? handlers.onPrev?.() : handlers.onNext?.();
+          break;
+        case "Escape":
+          handlers.onEscape?.();
+          break;
       }
     };
-    
-    return new Response(JSON.stringify(body), {
-      status: this.statusCode,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-  }
-}
 
-export function handleApiError(error: unknown): Response {
-  console.error('API Error:', error);
-  
-  if (error instanceof ApiError) {
-    return error.toResponse();
-  }
-  
-  // Generic error
-  return new ApiError(
-    'INTERNAL_ERROR',
-    'An unexpected error occurred',
-    500
-  ).toResponse();
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handlers, enabled]);
 }
 ```
 
-### Faza 5: Implementacja API endpoint (60 min)
+## 7. Integracja API
 
+### 7.1 POST /api/ai/generate
+
+**Używany w**: `AIGenerateForm.tsx`
+
+**Request**:
 ```typescript
-// src/pages/api/ai/generate.ts
+const command: GenerateFlashcardsCommand = {
+  text: text.trim(),
+  language: "pl", // opcjonalnie
+};
 
-import type { APIRoute } from 'astro';
-import { z } from 'zod';
-import type { 
-  GenerateFlashcardsCommand, 
-  GenerateFlashcardsResponseDTO 
-} from '@/types';
-import { generateFlashcardsSchema } from '@/lib/schemas/ai-generation.schema';
-import { aiFlashcardGenerator } from '@/lib/services/ai-flashcard-generator.service';
-import { AiGenerationLogService } from '@/lib/services/ai-generation-log.service';
-import { aiGenerationRateLimiter } from '@/lib/services/rate-limiter.service';
-import { ApiError, handleApiError } from '@/lib/utils/error-handler';
-import { GeminiApiError, ServiceUnavailableError } from '@/lib/utils/gemini-client';
+const response = await fetch("/api/ai/generate", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(command),
+});
+```
 
-export const prerender = false;
+**Response (200 OK)**:
+```typescript
+const data: GenerateFlashcardsResponseDTO = await response.json();
+// {
+//   generation_log_id: "uuid",
+//   flashcards: [{ front: "...", back: "..." }],
+//   count: 5,
+//   estimated_count: 5
+// }
+```
 
-export const POST: APIRoute = async (context) => {
+**Obsługa błędów**:
+- `400 Bad Request` - walidacja nie przeszła (toast: "Tekst musi mieć 100-5000 znaków")
+- `429 Too Many Requests` - rate limit (toast: "Zbyt wiele prób. Spróbuj za X sekund")
+- `500 Internal Server Error` - błąd AI (toast: "Nie udało się wygenerować fiszek. Spróbuj ponownie")
+- `503 Service Unavailable` - timeout AI (toast: "Generowanie trwa zbyt długo. Spróbuj z krótszym tekstem")
+
+**Po sukcesie**:
+1. Zapisz `generation_log_id` w state/sessionStorage
+2. Zapisz `flashcards` w state
+3. Zapisz `selectedDeckId` w state
+4. Przekieruj na `/generate/review` z danymi w URL params lub context
+
+### 7.2 POST /api/flashcards
+
+**Używany w**: `FlashcardReviewCard.tsx` (przy akceptacji/edycji)
+
+**Request (dla akceptacji)**:
+```typescript
+const command: CreateFlashcardCommand = {
+  deck_id: deckId,
+  front: flashcard.front,
+  back: flashcard.back,
+  source: "ai",
+};
+
+const response = await fetch("/api/flashcards", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(command),
+});
+```
+
+**Request (dla edycji)**:
+```typescript
+const command: CreateFlashcardCommand = {
+  deck_id: deckId,
+  front: editedFlashcard.front, // zmienione
+  back: editedFlashcard.back,   // zmienione
+  source: "ai",
+};
+```
+
+**Response (201 Created)**:
+```typescript
+const flashcard: FlashcardDTO = await response.json();
+// Użyj flashcard.id dla logowania akcji
+```
+
+### 7.3 POST /api/ai/review-actions
+
+**Używany w**: `FlashcardReviewCard.tsx` (po każdej akcji)
+
+**Request (accepted)**:
+```typescript
+const command: LogAiReviewActionCommand = {
+  generation_log_id: generationLogId,
+  flashcard_id: flashcardId, // z odpowiedzi POST /api/flashcards
+  action_type: "accepted",
+  original_front: flashcard.front,
+  original_back: flashcard.back,
+};
+```
+
+**Request (edited)**:
+```typescript
+const command: LogAiReviewActionCommand = {
+  generation_log_id: generationLogId,
+  flashcard_id: flashcardId,
+  action_type: "edited",
+  original_front: flashcard.front,
+  original_back: flashcard.back,
+  edited_front: editedFlashcard.front,
+  edited_back: editedFlashcard.back,
+};
+```
+
+**Request (rejected)**:
+```typescript
+const command: LogAiReviewActionCommand = {
+  generation_log_id: generationLogId,
+  flashcard_id: null, // fiszka nie została zapisana
+  action_type: "rejected",
+  original_front: flashcard.front,
+  original_back: flashcard.back,
+};
+```
+
+**Response (201 Created)**:
+```typescript
+const action: AiReviewActionDTO = await response.json();
+// Opcjonalnie użyj dla analytics
+```
+
+**Kolejność wywołań dla akceptacji/edycji**:
+1. POST /api/flashcards → otrzymaj `flashcard_id`
+2. POST /api/ai/review-actions → zaloguj akcję z `flashcard_id`
+
+**Kolejność wywołań dla odrzucenia**:
+1. POST /api/ai/review-actions → zaloguj akcję z `flashcard_id: null`
+2. Brak zapisu fiszki
+
+### 7.4 GET /api/decks
+
+**Używany w**: `DeckSelector.tsx` (istniejący komponent)
+
+**Request**:
+```typescript
+const response = await fetch("/api/decks?limit=100&page=1");
+const data: DeckListResponseDTO = await response.json();
+```
+
+**Response**:
+```typescript
+{
+  data: DeckListItemDTO[],
+  pagination: { page: 1, limit: 100, total: 5, total_pages: 1 }
+}
+```
+
+## 8. Interakcje użytkownika
+
+### 8.1 Formularz generowania (/generate)
+
+#### Wprowadzenie tekstu
+1. Użytkownik klika w textarea
+2. Użytkownik wpisuje/wkleja tekst
+3. System real-time aktualizuje:
+   - Licznik znaków (z kolorem: czerwony < 100, zielony 100-5000, czerwony > 5000)
+   - Szacowaną liczbę fiszek (~1 na 250 znaków)
+4. Przycisk "Generuj fiszki" jest enabled/disabled w zależności od walidacji
+
+#### Wybór talii
+1. Użytkownik klika dropdown "Dodaj do talii"
+2. System wyświetla listę istniejących talii + opcja "Utwórz nową talię"
+3. Użytkownik wybiera talię LUB klika "Utwórz nową talię"
+4. Jeśli nowa talia:
+   - Dropdown zamienia się w input field
+   - Użytkownik wpisuje nazwę i klika Enter lub "Utwórz"
+   - System tworzy talię (POST /api/decks)
+   - Nowa talia jest auto-select
+   - Dropdown wraca do normalnego stanu
+
+#### Generowanie
+1. Użytkownik klika "Generuj fiszki" LUB naciska Ctrl+Enter
+2. System:
+   - Disabled przycisk i pokazuje loading spinner
+   - Wysyła POST /api/ai/generate
+   - Wyświetla komunikat "Generowanie fiszek..."
+3. Po sukcesie:
+   - Zapisuje dane w state/sessionStorage
+   - Przekierowuje na /generate/review
+4. Po błędzie:
+   - Wyświetla toast z odpowiednim komunikatem
+   - Enabled przycisk z powrotem
+
+### 8.2 Widok recenzji (/generate/review)
+
+#### Wyświetlenie fiszek
+1. System ładuje dane z poprzedniego ekranu
+2. System wyświetla pierwszą fiszkę (index 0)
+3. Aktualna fiszka jest wyróżniona (border, highlight)
+4. Header pokazuje: "1 / 12", "Zaakceptowane: 0", "Odrzucone: 0"
+
+#### Akceptacja fiszki
+1. Użytkownik klika "Akceptuj" LUB naciska Enter
+2. System:
+   - Wysyła POST /api/flashcards
+   - Otrzymuje flashcard_id
+   - Wysyła POST /api/ai/review-actions (action_type: "accepted")
+   - Oznacza fiszkę jako accepted
+   - Wyświetla toast "Fiszka zaakceptowana"
+   - Przechodzi do następnej fiszki (currentIndex++)
+   - Aktualizuje liczniki
+
+#### Edycja fiszki
+1. Użytkownik klika "Edytuj" LUB naciska E
+2. System włącza tryb edycji:
+   - Front i back stają się editable (Input/Textarea)
+   - Przycisk "Edytuj" zmienia się w "Zapisz"
+   - Widoczny przycisk "Anuluj"
+3. Użytkownik edytuje tekst
+4. Użytkownik klika "Zapisz" LUB naciska Enter
+5. System:
+   - Waliduje (1-1000 znaków dla front i back)
+   - Wysyła POST /api/flashcards z edited content
+   - Otrzymuje flashcard_id
+   - Wysyła POST /api/ai/review-actions (action_type: "edited")
+   - Oznacza fiszkę jako edited
+   - Wyświetla toast "Fiszka zapisana"
+   - Przechodzi do następnej fiszki
+   - Aktualizuje liczniki
+
+#### Anulowanie edycji
+1. Użytkownik klika "Anuluj" LUB naciska Esc
+2. System:
+   - Przywraca oryginalną treść
+   - Wyłącza tryb edycji
+   - Powrót do widoku normalnego
+
+#### Odrzucenie fiszki
+1. Użytkownik klika "Odrzuć" LUB naciska Delete
+2. System:
+   - Wysyła POST /api/ai/review-actions (action_type: "rejected", flashcard_id: null)
+   - Oznacza fiszkę jako rejected
+   - Fiszka znika z interfejsu (lub jest oznaczona jako odrzucona)
+   - Przechodzi do następnej fiszki
+   - Aktualizuje liczniki
+
+#### Nawigacja
+1. Użytkownik naciska Tab → następna fiszka
+2. Użytkownik naciska Shift+Tab → poprzednia fiszka
+3. Użytkownik naciska strzałkę w dół → następna fiszka
+4. Użytkownik naciska strzałkę w górę → poprzednia fiszka
+5. System aktualizuje currentIndex i wyświetla odpowiednią fiszkę
+
+#### Zmiana talii
+1. Użytkownik klika dropdown "Dodaj do talii" w header
+2. System wyświetla listę talii + opcja "Utwórz nową talię"
+3. Użytkownik wybiera inną talię
+4. System aktualizuje selectedDeckId
+5. Wszystkie kolejne akceptacje/edycje idą do nowej talii
+
+#### Zakończenie recenzji
+1. Użytkownik zaakceptował/odrzucił ostatnią fiszkę
+2. System:
+   - Wyświetla ReviewSummary z podsumowaniem
+   - Pokazuje: zaakceptowane (X), edytowane (Y), odrzucone (Z)
+   - Pokazuje nazwę talii docelowej
+3. Użytkownik klika "Zamknij"
+   - Przekierowanie do /decks/[deckId]
+4. Użytkownik klika "Dodaj więcej fiszek"
+   - Przekierowanie do /generate
+
+## 9. Warunki i walidacja
+
+### 9.1 Formularz generowania (/generate)
+
+#### Walidacja tekstu (frontend + backend)
+- **Komponent**: `AIGenerateForm.tsx`
+- **Pole**: `text`
+- **Warunki**:
+  - Minimum: 100 znaków
+  - Maximum: 5000 znaków
+- **Weryfikacja frontend**:
+  ```typescript
+  const isTextValid = text.length >= 100 && text.length <= 5000;
+  ```
+- **Wpływ na UI**:
+  - Licznik znaków: czerwony jeśli invalid, zielony jeśli valid
+  - Komunikat błędu pod textarea:
+    - "Minimum 100 znaków" jeśli < 100
+    - "Maksimum 5000 znaków" jeśli > 5000
+  - Przycisk "Generuj fiszki": disabled jeśli invalid
+
+#### Walidacja talii
+- **Komponent**: `DeckSelector.tsx`
+- **Pole**: `selectedDeckId`
+- **Warunki**:
+  - Talia musi być wybrana (nie null)
+- **Weryfikacja frontend**:
+  ```typescript
+  const isDeckValid = selectedDeckId !== null;
+  ```
+- **Wpływ na UI**:
+  - Przycisk "Generuj fiszki": disabled jeśli brak talii
+  - Komunikat błędu: "Wybierz talię" jeśli próba submitu bez talii
+
+#### Submit disabled gdy
+- `text.length < 100`
+- `text.length > 5000`
+- `selectedDeckId === null`
+- `isGenerating === true`
+
+### 9.2 Widok recenzji (/generate/review)
+
+#### Walidacja talii przed akceptacją
+- **Komponent**: `AIReviewInterface.tsx`
+- **Warunki**:
+  - `selectedDeckId !== null` przed wysłaniem POST /api/flashcards
+- **Weryfikacja**:
+  ```typescript
+  if (!selectedDeckId) {
+    setError("Wybierz talię przed zaakceptowaniem fiszki");
+    return;
+  }
+  ```
+- **Wpływ na UI**:
+  - Toast error: "Wybierz talię przed zapisaniem fiszek"
+  - Przyciski "Akceptuj" i "Edytuj": disabled jeśli brak talii
+
+#### Walidacja edycji fiszki
+- **Komponent**: `FlashcardEditMode.tsx`
+- **Pola**: `front`, `back`
+- **Warunki**:
+  - Front: 1-1000 znaków
+  - Back: 1-1000 znaków
+  - Oba pola wymagane
+- **Weryfikacja frontend**:
+  ```typescript
+  const isFrontValid = front.trim().length >= 1 && front.length <= 1000;
+  const isBackValid = back.trim().length >= 1 && back.length <= 1000;
+  const isEditValid = isFrontValid && isBackValid;
+  ```
+- **Wpływ na UI**:
+  - Licznik znaków pod każdym polem (X/1000)
+  - Przycisk "Zapisz": disabled jeśli invalid
+  - Komunikaty błędów:
+    - "Pole nie może być puste" jeśli < 1
+    - "Maksimum 1000 znaków" jeśli > 1000
+
+#### Przyciski disabled podczas loading
+- **Komponenty**: `FlashcardActionButtons.tsx`
+- **Warunki**:
+  - `isLoading === true` (podczas POST request)
+- **Wpływ na UI**:
+  - Wszystkie przyciski akcji: disabled
+  - Loading spinner przy aktualnym przycisku
+
+## 10. Obsługa błędów
+
+### 10.1 Błędy API generowania
+
+#### 400 Bad Request - Walidacja
+- **Przypadek**: Tekst < 100 lub > 5000 znaków (błąd backendu)
+- **Obsługa**:
+  ```typescript
+  if (response.status === 400) {
+    const error: ErrorResponseDTO = await response.json();
+    toast.error("Tekst musi mieć 100-5000 znaków");
+  }
+  ```
+
+#### 429 Too Many Requests - Rate Limit
+- **Przypadek**: Użytkownik przekroczył 10 requestów/minutę
+- **Obsługa**:
+  ```typescript
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("Retry-After");
+    toast.error(`Zbyt wiele prób. Spróbuj za ${retryAfter} sekund.`);
+  }
+  ```
+
+#### 500 Internal Server Error - AI Error
+- **Przypadek**: Błąd Google Gemini API
+- **Obsługa**:
+  ```typescript
+  if (response.status === 500) {
+    toast.error("Nie udało się wygenerować fiszek. Spróbuj ponownie.");
+  }
+  ```
+
+#### 503 Service Unavailable - Timeout
+- **Przypadek**: AI timeout (> 30s)
+- **Obsługa**:
+  ```typescript
+  if (response.status === 503) {
+    toast.error("Generowanie trwa zbyt długo. Spróbuj z krótszym tekstem.");
+  }
+  ```
+
+#### Network Error
+- **Przypadek**: Brak internetu, serwer nie odpowiada
+- **Obsługa**:
+  ```typescript
   try {
-    // 1. Authentication
-    const { data: { user }, error: authError } = await context.locals.supabase.auth.getUser();
-    
-    if (authError || !user) {
-      throw new ApiError(
-        'UNAUTHORIZED',
-        'Missing or invalid authentication token',
-        401
-      );
-    }
-    
-    // 2. Rate limiting
-    const rateLimit = aiGenerationRateLimiter.check(user.id);
-    
-    if (!rateLimit.allowed) {
-      const waitSeconds = Math.ceil((rateLimit.resetAt - Date.now()) / 1000);
-      
-      return new Response(JSON.stringify({
-        error: {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message: `Rate limit exceeded. Maximum 10 requests per minute allowed. Please try again in ${waitSeconds} seconds.`
-        }
-      }), {
-        status: 429,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-RateLimit-Limit': '10',
-          'X-RateLimit-Remaining': rateLimit.remaining.toString(),
-          'X-RateLimit-Reset': rateLimit.resetAt.toString(),
-          'Retry-After': waitSeconds.toString()
-        }
-      });
-    }
-    
-    // 3. Parse and validate request body
-    let requestBody: GenerateFlashcardsCommand;
-    
-    try {
-      const rawBody = await context.request.json();
-      requestBody = generateFlashcardsSchema.parse(rawBody);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        throw new ApiError(
-          'VALIDATION_ERROR',
-          'Invalid input data',
-          400,
-          error.errors.map(e => ({
-            field: e.path.join('.'),
-            message: e.message
-          }))
-        );
-      }
-      throw error;
-    }
-    
-    // 4. Generate flashcards using AI
-    let flashcards;
-    
-    try {
-      flashcards = await aiFlashcardGenerator.generate(
-        requestBody.text,
-        requestBody.language
-      );
-    } catch (error) {
-      if (error instanceof ServiceUnavailableError) {
-        throw new ApiError(
-          'AI_SERVICE_ERROR',
-          'AI service is temporarily unavailable. Please try again later.',
-          503
-        );
-      }
-      
-      if (error instanceof GeminiApiError) {
-        throw new ApiError(
-          'AI_SERVICE_ERROR',
-          'Failed to generate flashcards. Please try again.',
-          500
-        );
-      }
-      
-      // Timeout or network error
-      throw new ApiError(
-        'AI_SERVICE_ERROR',
-        'AI service request timed out. Please try again with shorter text.',
-        500
-      );
-    }
-    
-    // 5. Save generation log
-    const logService = new AiGenerationLogService(context.locals.supabase);
-    
-    let generationLogId: string;
-    
-    try {
-      generationLogId = await logService.create({
-        user_id: user.id,
-        input_text: requestBody.text,
-        input_length: requestBody.text.length,
-        generated_count: flashcards.length
-      });
-    } catch (error) {
-      console.error('Failed to save generation log:', error);
-      throw new ApiError(
-        'INTERNAL_ERROR',
-        'Failed to save generation log. Please try again.',
-        500
-      );
-    }
-    
-    // 6. Format and return response
-    const response: GenerateFlashcardsResponseDTO = {
-      generation_log_id: generationLogId,
-      flashcards: flashcards,
-      count: flashcards.length,
-      estimated_count: flashcards.length
-    };
-    
-    return new Response(JSON.stringify(response), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-RateLimit-Limit': '10',
-        'X-RateLimit-Remaining': rateLimit.remaining.toString(),
-        'X-RateLimit-Reset': rateLimit.resetAt.toString()
-      }
-    });
-    
+    const response = await fetch(...);
   } catch (error) {
-    return handleApiError(error);
+    toast.error("Problem z połączeniem. Sprawdź internet i spróbuj ponownie.");
   }
-};
-```
+  ```
 
-### Faza 6: Testing (45 min)
+### 10.2 Błędy recenzji
 
-#### 6.1 Unit tests dla serwisów
-```typescript
-// tests/services/ai-flashcard-generator.test.ts
+#### Brak talii
+- **Przypadek**: Użytkownik próbuje zaakceptować fiszkę bez wybranej talii
+- **Obsługa**:
+  ```typescript
+  if (!selectedDeckId) {
+    toast.error("Wybierz talię przed zapisaniem fiszek");
+    return;
+  }
+  ```
 
-import { describe, it, expect, vi } from 'vitest';
-import { AiFlashcardGeneratorService } from '@/lib/services/ai-flashcard-generator.service';
+#### Błąd zapisu fiszki (POST /api/flashcards)
+- **Przypadek**: Błąd 400/500 podczas tworzenia fiszki
+- **Obsługa**:
+  ```typescript
+  if (!response.ok) {
+    toast.error("Nie udało się zapisać fiszki. Spróbuj ponownie.");
+    // Nie przechodzi do następnej fiszki
+    return;
+  }
+  ```
 
-describe('AiFlashcardGeneratorService', () => {
-  it('should generate flashcards from text', async () => {
-    const service = new AiFlashcardGeneratorService();
-    
-    const result = await service.generate(
-      'The Spanish verb "estar" is used for temporary states.',
-      'en'
-    );
-    
-    expect(result).toBeInstanceOf(Array);
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[0]).toHaveProperty('front');
-    expect(result[0]).toHaveProperty('back');
-  });
-  
-  it('should handle AI errors gracefully', async () => {
-    const service = new AiFlashcardGeneratorService();
-    
-    // Mock Gemini client to throw error
-    vi.spyOn(service['geminiClient'], 'generateContent')
-      .mockRejectedValue(new Error('API Error'));
-    
-    await expect(service.generate('test text', 'en'))
-      .rejects.toThrow();
-  });
-});
-```
+#### Błąd logowania akcji (POST /api/ai/review-actions)
+- **Przypadek**: Błąd podczas logowania akcji
+- **Obsługa**:
+  ```typescript
+  // Logowanie akcji nie jest krytyczne
+  // Fiszka została zapisana, więc można kontynuować
+  if (!actionResponse.ok) {
+    console.error("Failed to log review action");
+    // Toast opcjonalny, nie blokuje procesu
+  }
+  ```
 
-#### 6.2 Integration tests
-```typescript
-// tests/api/ai/generate.test.ts
+### 10.3 Edge Cases
 
-import { describe, it, expect } from 'vitest';
+#### Brak fiszek wygenerowanych
+- **Przypadek**: AI zwróciło pustą tablicę fiszek
+- **Obsługa**:
+  ```typescript
+  if (data.flashcards.length === 0) {
+    toast.error("AI nie wygenerowało żadnych fiszek. Spróbuj z innym tekstem.");
+    return; // nie przekierowuj do recenzji
+  }
+  ```
 
-describe('POST /api/ai/generate', () => {
-  it('should return 401 without auth token', async () => {
-    const response = await fetch('/api/ai/generate', {
-      method: 'POST',
-      body: JSON.stringify({
-        text: 'Test text with more than 100 characters...',
-        language: 'en'
-      })
+#### Utrata danych podczas recenzji
+- **Przypadek**: Użytkownik odświeża stronę podczas recenzji
+- **Obsługa**:
+  - Zapisz stan recenzji w sessionStorage po każdej akcji
+  - Przy inicjalizacji sprawdź sessionStorage
+  - Zaproponuj wznowienie recenzji
+  ```typescript
+  useEffect(() => {
+    const savedState = sessionStorage.getItem("review-state");
+    if (savedState) {
+      const shouldResume = confirm("Masz nieukończoną recenzję. Wznowić?");
+      if (shouldResume) {
+        setState(JSON.parse(savedState));
+      } else {
+        sessionStorage.removeItem("review-state");
+      }
+    }
+  }, []);
+  ```
+
+#### Timeout podczas zapisywania fiszki
+- **Przypadek**: Request trwa > 30s
+- **Obsługa**:
+  ```typescript
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch("/api/flashcards", {
+      signal: controller.signal,
+      ...
     });
-    
-    expect(response.status).toBe(401);
-  });
-  
-  it('should return 400 for invalid input', async () => {
-    const response = await fetch('/api/ai/generate', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer test-token'
-      },
-      body: JSON.stringify({
-        text: 'Too short',
-        language: 'en'
-      })
-    });
-    
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error.code).toBe('VALIDATION_ERROR');
-  });
-  
-  // Więcej testów...
-});
-```
+  } catch (error) {
+    if (error.name === "AbortError") {
+      toast.error("Zapisywanie trwa zbyt długo. Sprawdź połączenie.");
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  ```
 
-#### 6.3 Manual testing checklist
-- [ ] Test z prawidłowymi danymi (200 OK)
-- [ ] Test bez tokenu autoryzacji (401)
-- [ ] Test z nieprawidłowym tokenem (401)
-- [ ] Test z tekstem < 100 znaków (400)
-- [ ] Test z tekstem > 5000 znaków (400)
-- [ ] Test z nieprawidłowym kodem języka (400)
-- [ ] Test rate limiting - 11 żądań w ciągu minuty (429)
-- [ ] Test z różnymi językami (en, pl, es)
-- [ ] Test z różnymi typami treści (definicje, fakty, przykłady)
-- [ ] Test odpowiedzi AI - czy fiszki mają sens
-- [ ] Test zapisu do ai_generation_logs
-- [ ] Test performance - czas odpowiedzi < 10s
+## 11. Kroki implementacji
 
-### Faza 7: Documentation i cleanup (30 min)
+### Krok 1: Przygotowanie struktury routingu
+1. Utwórz plik `src/pages/generate.astro` (formularz generowania)
+2. Utwórz plik `src/pages/generate/review.astro` (widok recenzji)
+3. Dodaj ochronę middleware (redirect niezalogowanych do `/login`)
+4. Przetestuj routing: `/generate` i `/generate/review` powinny być dostępne tylko dla zalogowanych
 
-#### 7.1 API documentation update
-Dodać endpoint do dokumentacji API w `README.md` lub `/docs/api.md`
+### Krok 2: Implementacja komponentów pomocniczych
+1. Utwórz `src/components/CharacterCounter.tsx`
+   - Props: `current`, `max`, `min`
+   - Logika kolorów (czerwony < min, zielony valid, czerwony > max)
+   - Format: "X,XXX / 5,000 znaków"
+   - aria-live="polite"
 
-#### 7.2 Code review checklist
-- [ ] Wszystkie typy z types.ts są używane
-- [ ] Walidacja zgodna ze specyfikacją
-- [ ] Error handling dla wszystkich przypadków
-- [ ] Rate limiting działa poprawnie
-- [ ] Logging errors do console
-- [ ] Security best practices (API key w env, no injection)
-- [ ] Performance considerations (timeout, caching)
-- [ ] Code follows project guidelines (copilot-instructions.md)
+2. Utwórz `src/components/EstimatedCount.tsx`
+   - Props: `textLength`
+   - Formuła: `Math.max(1, Math.floor(textLength / 250))`
+   - Format: "Szacowana liczba fiszek: ~X"
 
-#### 7.3 Deployment considerations
-```bash
-# Przed deploymentem upewnić się:
-# 1. GEMINI_API_KEY jest ustawiony w production env
-# 2. Supabase RLS policies pozwalają na insert do ai_generation_logs
-# 3. Rate limiter jest skonfigurowany (Redis w production?)
-# 4. Monitoring i error tracking (Sentry?)
-```
+3. Utwórz `src/components/LoadingSpinner.tsx`
+   - Props: `message?`
+   - Spinner animation (użyj Tailwind lub Shadcn)
+   - Domyślny message: "Ładowanie..."
 
-## 10. Podsumowanie
+### Krok 3: Implementacja formularza generowania
+1. Utwórz `src/components/AIGenerateForm.tsx`
+   - State: `text`, `selectedDeckId`, `isGenerating`, `error`
+   - Struktura JSX:
+     - Textarea z autofocus
+     - CharacterCounter pod textarea
+     - EstimatedCount pod licznikiem
+     - DeckSelector (istniejący komponent)
+     - Button "Generuj fiszki"
+     - LoadingSpinner (conditional, podczas generowania)
+   
+2. Implementacja logiki walidacji:
+   ```typescript
+   const isValid = useMemo(() => {
+     return text.length >= 100 && 
+            text.length <= 5000 && 
+            selectedDeckId !== null;
+   }, [text, selectedDeckId]);
+   ```
 
-### Wymagane pliki do utworzenia/modyfikacji:
+3. Implementacja handleSubmit:
+   ```typescript
+   const handleSubmit = async (e: FormEvent) => {
+     e.preventDefault();
+     
+     if (!isValid) return;
+     
+     setIsGenerating(true);
+     setError(null);
+     
+     try {
+       const command: GenerateFlashcardsCommand = {
+         text: text.trim(),
+         language: "pl",
+       };
+       
+       const response = await fetch("/api/ai/generate", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(command),
+       });
+       
+       if (!response.ok) {
+         // Obsługa błędów (patrz sekcja 10)
+         handleApiError(response);
+         return;
+       }
+       
+       const data: GenerateFlashcardsResponseDTO = await response.json();
+       
+       // Zapisz w sessionStorage
+       sessionStorage.setItem("generation-data", JSON.stringify({
+         generationLogId: data.generation_log_id,
+         flashcards: data.flashcards,
+         deckId: selectedDeckId,
+       }));
+       
+       // Przekieruj
+       window.location.href = "/generate/review";
+       
+     } catch (error) {
+       toast.error("Problem z połączeniem. Sprawdź internet.");
+     } finally {
+       setIsGenerating(false);
+     }
+   };
+   ```
 
-**Nowe pliki:**
-1. `src/pages/api/ai/generate.ts` - główny endpoint
-2. `src/lib/services/ai-flashcard-generator.service.ts` - AI generation logic
-3. `src/lib/services/ai-generation-log.service.ts` - database logging
-4. `src/lib/services/rate-limiter.service.ts` - rate limiting
-5. `src/lib/utils/gemini-client.ts` - Gemini API wrapper
-6. `src/lib/schemas/ai-generation.schema.ts` - Zod validation
-7. `src/lib/utils/error-handler.ts` - error utilities
+4. Integracja keyboard shortcut (Ctrl+Enter):
+   ```typescript
+   const handleKeyDown = (e: KeyboardEvent) => {
+     if (e.ctrlKey && e.key === "Enter" && isValid) {
+       handleSubmit(e);
+     }
+   };
+   ```
 
-**Istniejące pliki:**
-- `src/types.ts` - typy już zdefiniowane ✅
-- `.env` - dodać GEMINI_API_KEY
+5. Integruj formularz w `src/pages/generate.astro`:
+   ```astro
+   ---
+   import Layout from "@/layouts/DashboardLayout.astro";
+   import { AIGenerateForm } from "@/components/AIGenerateForm";
+   ---
+   <Layout title="Generuj fiszki z AI">
+     <AIGenerateForm client:load />
+   </Layout>
+   ```
 
-### Szacowany czas implementacji:
-- **Faza 1:** Setup - 45 min
-- **Faza 2:** Services - 90 min
-- **Faza 3:** Validation - 15 min
-- **Faza 4:** Error handling - 15 min
-- **Faza 5:** API endpoint - 60 min
-- **Faza 6:** Testing - 45 min
-- **Faza 7:** Documentation - 30 min
+### Krok 4: Definicja typów dla recenzji
+1. Dodaj nowe typy do `src/types.ts` lub utwórz `src/types/review.types.ts`:
+   - `ReviewFlashcard`
+   - `EditedFlashcard`
+   - `ReviewState`
+   - `ReviewStats`
+   - `ReviewSummaryData`
+   - `GenerateFormState`
+   - `GenerateFormValidation`
 
-**Total: ~5 godzin**
+### Krok 5: Implementacja custom hooks
+1. Utwórz `src/components/hooks/useReviewState.ts`
+   - Zarządzanie stanem recenzji
+   - Akcje: accept, edit, reject, navigate
+   - Computed values: stats, isComplete, currentFlashcard
 
-### Kluczowe punkty uwagi:
-1. ✅ Wszystkie typy są już zdefiniowane w types.ts
-2. ✅ Walidacja zgodna ze specyfikacją (100-5000 znaków)
-3. ✅ Rate limiting 10 req/min per user
-4. ✅ Proper error handling dla wszystkich przypadków
-5. ✅ Security: API key w env, auth middleware, input validation
-6. ⚠️ Rate limiter: in-memory dla start, rozważyć Redis w przyszłości
-7. ⚠️ Monitoring: dodać metryki wydajności w przyszłości
+2. Utwórz `src/components/hooks/useKeyboardShortcuts.ts`
+   - Obsługa skrótów klawiszowych
+   - Warunek: ignoruj gdy focus na input/textarea
+   - Handlers dla: Enter, E, Delete, Tab, Shift+Tab, Esc
+
+### Krok 6: Implementacja komponentów recenzji - podstawowe
+1. Utwórz `src/components/ReviewProgress.tsx`
+   - Props: `current`, `total`, `acceptedCount`, `rejectedCount`
+   - Progress bar (Shadcn/ui)
+   - Liczniki tekstowe
+
+2. Utwórz `src/components/ReviewHeader.tsx`
+   - Props: `selectedDeckId`, `onDeckSelect`, `currentIndex`, `total`, `acceptedCount`, `rejectedCount`
+   - Tytuł "Recenzja wygenerowanych fiszek"
+   - DeckSelector
+   - Liczniki (aktualna/total, zaakceptowane, odrzucone)
+
+3. Utwórz `src/components/FlashcardActionButtons.tsx`
+   - Props: `onAccept`, `onEdit`, `onReject`, `isEditMode`, `disabled`
+   - Trzy przyciski: Akceptuj (zielony), Edytuj (niebieski), Odrzuć (czerwony)
+   - Button styling z Shadcn/ui
+
+### Krok 7: Implementacja edycji fiszki
+1. Utwórz `src/components/FlashcardEditMode.tsx`
+   - Props: `originalFront`, `originalBack`, `onSave`, `onCancel`
+   - State: `editedFront`, `editedBack`
+   - Walidacja: 1-1000 znaków
+   - Liczniki znaków
+   - Input dla front, Textarea dla back
+   - Przyciski: Zapisz, Anuluj
+   - Keyboard: Enter = save, Esc = cancel
+
+### Krok 8: Implementacja karty fiszki
+1. Utwórz `src/components/FlashcardReviewCard.tsx`
+   - Props: `flashcard`, `deckId`, `generationLogId`, `isActive`, `onAccept`, `onReject`, `onEdit`
+   - State: `isEditMode`, `isLoading`
+   - Toggle między display mode a edit mode
+   - Display mode: FlashcardActionButtons
+   - Edit mode: FlashcardEditMode
+   
+2. Implementacja handleAccept:
+   ```typescript
+   const handleAccept = async () => {
+     if (!deckId) {
+       toast.error("Wybierz talię");
+       return;
+     }
+     
+     setIsLoading(true);
+     try {
+       // 1. Utwórz fiszkę
+       const createCommand: CreateFlashcardCommand = {
+         deck_id: deckId,
+         front: flashcard.front,
+         back: flashcard.back,
+         source: "ai",
+       };
+       
+       const flashcardResponse = await fetch("/api/flashcards", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(createCommand),
+       });
+       
+       if (!flashcardResponse.ok) {
+         throw new Error("Failed to create flashcard");
+       }
+       
+       const createdFlashcard: FlashcardDTO = await flashcardResponse.json();
+       
+       // 2. Zaloguj akcję
+       const logCommand: LogAiReviewActionCommand = {
+         generation_log_id: generationLogId,
+         flashcard_id: createdFlashcard.id,
+         action_type: "accepted",
+         original_front: flashcard.front,
+         original_back: flashcard.back,
+       };
+       
+       await fetch("/api/ai/review-actions", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(logCommand),
+       });
+       
+       // 3. Wywołaj callback
+       onAccept(flashcard.id);
+       toast.success("Fiszka zaakceptowana");
+       
+     } catch (error) {
+       toast.error("Nie udało się zapisać fiszki");
+     } finally {
+       setIsLoading(false);
+     }
+   };
+   ```
+
+3. Implementacja handleEdit (podobna logika, action_type="edited")
+
+4. Implementacja handleReject:
+   ```typescript
+   const handleReject = async () => {
+     setIsLoading(true);
+     try {
+       // Tylko logowanie, bez tworzenia fiszki
+       const logCommand: LogAiReviewActionCommand = {
+         generation_log_id: generationLogId,
+         flashcard_id: null,
+         action_type: "rejected",
+         original_front: flashcard.front,
+         original_back: flashcard.back,
+       };
+       
+       await fetch("/api/ai/review-actions", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(logCommand),
+       });
+       
+       onReject(flashcard.id);
+       toast.success("Fiszka odrzucona");
+       
+     } catch (error) {
+       console.error("Failed to log rejection");
+       // Nie blokuj procesu
+       onReject(flashcard.id);
+     } finally {
+       setIsLoading(false);
+     }
+   };
+   ```
+
+### Krok 9: Implementacja podsumowania
+1. Utwórz `src/components/ReviewSummary.tsx`
+   - Props: `acceptedCount`, `editedCount`, `rejectedCount`, `deckId`, `deckName`, `onClose`, `onAddMore`
+   - Wyświetl statystyki w czytelnym formacie
+   - Dwa przyciski:
+     - "Zamknij" → `onClose()` → redirect do `/decks/${deckId}`
+     - "Dodaj więcej fiszek" → `onAddMore()` → redirect do `/generate`
+
+### Krok 10: Implementacja głównego interfejsu recenzji
+1. Utwórz `src/components/AIReviewInterface.tsx`
+   - Props: `generationLogId`, `flashcards`, `initialDeckId?`
+   - Użyj `useReviewState` hook
+   - Użyj `useKeyboardShortcuts` hook
+   
+2. Struktura JSX:
+   ```tsx
+   return (
+     <div className="space-y-6">
+       <ReviewHeader
+         selectedDeckId={state.selectedDeckId}
+         onDeckSelect={setDeck}
+         currentIndex={state.currentIndex}
+         total={stats.total}
+         acceptedCount={stats.accepted}
+         rejectedCount={stats.rejected}
+       />
+       
+       <ReviewProgress
+         current={state.currentIndex + 1}
+         total={stats.total}
+         acceptedCount={stats.accepted}
+         rejectedCount={stats.rejected}
+       />
+       
+       {!isComplete ? (
+         <FlashcardReviewCard
+           flashcard={currentFlashcard}
+           deckId={state.selectedDeckId!}
+           generationLogId={state.generationLogId}
+           isActive={true}
+           onAccept={acceptFlashcard}
+           onReject={rejectFlashcard}
+           onEdit={editFlashcard}
+         />
+       ) : (
+         <ReviewSummary
+           acceptedCount={stats.accepted}
+           editedCount={stats.edited}
+           rejectedCount={stats.rejected}
+           deckId={state.selectedDeckId!}
+           deckName={deckName}
+           onClose={() => window.location.href = `/decks/${state.selectedDeckId}`}
+           onAddMore={() => window.location.href = "/generate"}
+         />
+       )}
+     </div>
+   );
+   ```
+
+3. Implementacja keyboard shortcuts:
+   ```typescript
+   useKeyboardShortcuts({
+     onEnter: () => !isEditMode && acceptFlashcard(currentFlashcard.id),
+     onEdit: () => !isEditMode && setEditMode(true),
+     onDelete: () => !isEditMode && rejectFlashcard(currentFlashcard.id),
+     onNext: () => navigateNext(),
+     onPrev: () => navigatePrev(),
+     onEscape: () => isEditMode && setEditMode(false),
+   }, !state.isLoading);
+   ```
+
+4. Persistence do sessionStorage po każdej akcji:
+   ```typescript
+   useEffect(() => {
+     sessionStorage.setItem("review-state", JSON.stringify(state));
+   }, [state]);
+   ```
+
+### Krok 11: Integracja z Astro page
+1. W `src/pages/generate/review.astro`:
+   ```astro
+   ---
+   import Layout from "@/layouts/DashboardLayout.astro";
+   import { AIReviewInterface } from "@/components/AIReviewInterface";
+   
+   // Sprawdź czy są dane w sessionStorage
+   // W production można użyć URL params lub server-side props
+   ---
+   <Layout title="Recenzja fiszek">
+     <AIReviewInterface client:load />
+     
+     <script>
+       // Odczyt z sessionStorage i przekazanie do komponentu
+       const data = sessionStorage.getItem("generation-data");
+       if (!data) {
+         window.location.href = "/generate";
+       } else {
+         const parsed = JSON.parse(data);
+         // Przekaż do React komponentu przez window.__INITIAL_DATA__
+         window.__INITIAL_DATA__ = parsed;
+       }
+     </script>
+   </Layout>
+   ```
+
+2. Modyfikacja `AIReviewInterface.tsx` żeby odczytywać dane:
+   ```typescript
+   useEffect(() => {
+     const initialData = (window as any).__INITIAL_DATA__;
+     if (initialData) {
+       // Inicjalizuj state z tych danych
+     }
+   }, []);
+   ```
+
+### Krok 12: Obsługa błędów i edge cases
+1. Dodaj error boundaries w React komponentach
+2. Dodaj timeout handling dla API calls
+3. Dodaj retry logic dla failed requests (opcjonalne)
+4. Dodaj komunikaty toast dla wszystkich błędów (patrz sekcja 10)
+
+### Krok 13: Testowanie i optymalizacja
+1. Testuj pełny flow: formularz → generowanie → recenzja → zapis
+2. Testuj wszystkie edge cases:
+   - Tekst < 100 i > 5000 znaków
+   - Brak wybranej talii
+   - Rate limiting (10 requestów/min)
+   - Timeout AI
+   - Błędy sieciowe
+   - Odświeżenie strony podczas recenzji
+   - Wszystkie keyboard shortcuts
+3. Optymalizuj performance:
+   - Memoizacja computed values
+   - Debounce dla auto-save (jeśli będzie)
+   - Lazy loading komponentów (opcjonalne)
+
+### Krok 14: Dodanie pomocy użytkownika
+1. Dodaj przycisk "?" w prawym górnym rogu obu widoków
+2. Modal z listą skrótów klawiszowych:
+   - Formularz: Ctrl+Enter = generuj
+   - Recenzja: Enter = akceptuj, E = edytuj, Delete = odrzuć, Tab = następna, Shift+Tab = poprzednia, Esc = anuluj
+3. Dodaj tooltips na przyciskach akcji (opcjonalne)
+
+### Krok 15: Styling i responsywność
+1. Użyj Tailwind CSS zgodnie z istniejącym design system
+2. Wykorzystaj komponenty Shadcn/ui dla spójności
+3. Testuj responsywność:
+   - Mobile (320px+)
+   - Tablet (768px+)
+   - Desktop (1024px+)
+4. Dodaj animacje:
+   - Fade-in dla fiszek
+   - Slide dla przejść między fiszkami
+   - Loading spinners
+
+### Krok 16: Finalne testy i deployment
+1. Test E2E flow kilkukrotnie
+2. Test accessibility (aria-labels, keyboard navigation, screen readers)
+3. Test performance (Lighthouse)
+4. Code review
+5. Merge do main branch
+6. Deploy
+
+---
+
+**Uwagi końcowe**:
+- Wszystkie komponenty React powinny używać TypeScript
+- Wszystkie API calls powinny mieć proper error handling
+- Wszystkie formularze powinny mieć walidację frontend + backend
+- Kod powinien być zgodny z praktykami z `.github/copilot-instructions.md`
+- Używaj istniejących komponentów Shadcn/ui dla spójności (Button, Input, Textarea, Select, Dialog, etc.)

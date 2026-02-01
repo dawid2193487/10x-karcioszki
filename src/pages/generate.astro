@@ -1,0 +1,36 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import Navigation from "@/components/Navigation.astro";
+import AIGenerateForm from "@/components/AIGenerateForm";
+
+const supabase = Astro.locals.supabase;
+const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+if (authError || !user) {
+  return Astro.redirect("/login");
+}
+
+// Get deck_id from URL query params
+const deckId = Astro.url.searchParams.get("deck_id") || undefined;
+
+const pageTitle = "Generowanie fiszek AI";
+---
+
+<Layout title={pageTitle}>
+  <div class="min-h-screen bg-gray-50">
+    <Navigation user={user} />
+    <main class="container mx-auto px-4 py-8">
+  <div class="container mx-auto px-4 py-8">
+    <div class="max-w-4xl mx-auto">
+      <div class="mb-8">
+        <h1 class="text-3xl font-bold mb-2">{pageTitle}</h1>
+        <p class="text-muted-foreground">
+          Wklej tekst edukacyjny poniżej, a AI wygeneruje dla Ciebie fiszki do nauki.
+        </p>
+      </div>
+      
+        <AIGenerateForm client:load initialDeckId={deckId} />
+      </div>
+    </main>
+  </div>
+</Layout>

@@ -1,0 +1,86 @@
+---
+import DashboardLayout from "../../layouts/DashboardLayout.astro";
+import { DeckService } from "../../lib/services/deck.service";
+import { FlashcardService } from "../../lib/services/flashcard.service";
+import type { DeckDetailDTO, FlashcardListResponseDTO } from "../../types";
+import { DeckView } from "../../components/DeckView";
+
+export const prerender = false;
+
+// Get URL parameters
+const { id } = Astro.params;
+const url = new URL(Astro.request.url);
+const page = parseInt(url.searchParams.get("page") || "1");
+const limit = parseInt(url.searchParams.get("limit") || "20");
+
+// Check authentication through middleware
+const supabase = Astro.locals.supabase;
+const {
+  data: { user },
+  error: authError,
+} = await supabase.auth.getUser();
+
+if (!user || authError) {
+  console.log("User not authenticated, redirecting to login.");
+  return Astro.redirect("/login");
+}
+
+// Validate deck ID parameter
+if (!id) {
+  return Astro.redirect("/");
+}
+
+// Fetch deck details and flashcards (SSR)
+let deck: DeckDetailDTO | null = null;
+let flashcardsData: FlashcardListResponseDTO | null = null;
+let fetchError: string | null = null;
+
+try {
+  const deckService = new DeckService(supabase);
+  const flashcardService = new FlashcardService(supabase);
+
+  // Fetch deck details
+  deck = await deckService.getDeck(user.id, id);
+
+  // Fetch flashcards for this deck
+  flashcardsData = await flashcardService.listFlashcards(user.id, {
+    deck_id: id,
+    page,
+    limit,
+  });
+} catch (error: any) {
+  console.error("Error fetching deck data:", error);
+
+  // Redirect to dashboard if deck not found
+  if (error.code === "NOT_FOUND") {
+    return Astro.redirect("/");
+  }
+
+  fetchError = "Wystąpił błąd podczas ładowania danych";
+}
+
+const flashcards = flashcardsData?.data || [];
+const pagination = flashcardsData?.pagination || {
+  page: 1,
+  limit: 20,
+  total: 0,
+  total_pages: 1,
+};
+
+// For server-side rendering, we pass initial data to client components
+const initialData = {
+  deck,
+  flashcards,
+  pagination,
+};
+---
+
+<DashboardLayout user={user} decks={[]}>
+  {fetchError && <div class="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg mb-6">{fetchError}</div>}
+
+  {
+    !fetchError && deck && (
+      <DeckView client:load initialDeck={deck} initialFlashcards={flashcards} initialPagination={pagination} />
+    )
+  }
+</DashboardLayout>
