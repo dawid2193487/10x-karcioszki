@@ -17,6 +17,19 @@ jobs:
       run: npm ci
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
+    - name: Set up Supabase CLI
+      uses: supabase/setup-cli@v1
+      with:
+        version: latest
+    - name: Start Supabase
+      run: npx supabase start
+    - name: Start Astro dev server
+      run: npm run dev:e2e &
+      env:
+        CI: true
+    - name: Wait for server to be ready
+      run: |
+        timeout 60 bash -c 'until curl -s http://localhost:3000/login > /dev/null; do sleep 1; done'
     - name: Run Playwright tests
       run: npx playwright test
     - uses: actions/upload-artifact@v4
